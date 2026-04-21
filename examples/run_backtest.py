@@ -48,6 +48,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--volatility-max-scale", type=float, default=3.0)
     parser.add_argument("--start", type=str, default=None)
     parser.add_argument("--end", type=str, default=None)
+    parser.add_argument(
+        "--signal-timeframe",
+        type=str,
+        default=None,
+        help=(
+            "Optional higher timeframe for signal generation (for example 1D). "
+            "When set, signals are recalculated on progressively formed higher-timeframe bars "
+            "while execution still happens on the source bars."
+        ),
+    )
     return parser
 
 
@@ -81,6 +91,7 @@ def main() -> None:
             volatility_min_scale=args.volatility_min_scale,
             volatility_max_scale=args.volatility_max_scale,
             execute_on_signal_bar=strategy_name in {"ut_bot", "utbot"},
+            signal_timeframe=args.signal_timeframe,
         )
     )
     result = engine.run(data, strategy)
