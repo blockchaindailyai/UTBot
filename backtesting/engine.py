@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import pandas as pd
 
@@ -37,7 +37,7 @@ class BacktestResult:
     stats: dict[str, float]
 
     def trades_dataframe(self) -> pd.DataFrame:
-        return pd.DataFrame([t.__dict__ for t in self.trades])
+        return pd.DataFrame([asdict(t) for t in self.trades])
 
 
 class BacktestEngine:
