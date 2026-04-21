@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from .engine import BacktestResult
+from .strategy import compute_ut_bot_components
 
 
 def _to_points(series: pd.Series) -> list[dict[str, float | str]]:
@@ -20,55 +21,18 @@ def _ut_bot_payload(
     key_value: float = 1.0,
     atr_period: int = 10,
 ) -> dict[str, list[dict[str, float | str]]]:
-    high = data["high"].astype("float64")
-    low = data["low"].astype("float64")
-    close = data["close"].astype("float64")
-    prev_close = close.shift(1)
-
-    true_range = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    atr = true_range.ewm(alpha=1.0 / float(atr_period), adjust=False).mean()
-    n_loss = key_value * atr
-
-    trailing_stop = pd.Series(index=close.index, dtype="float64")
-    buy_signal = pd.Series(False, index=close.index, dtype="bool")
-    sell_signal = pd.Series(False, index=close.index, dtype="bool")
-
-    if len(close) == 0:
+    trailing_stop, buy_signal, sell_signal, _ = compute_ut_bot_components(
+        data=data,
+        key_value=key_value,
+        atr_period=atr_period,
+    )
+    if len(trailing_stop) == 0:
         return {"trailing_stop": [], "markers": []}
 
-    trailing_stop.iloc[0] = close.iloc[0] - n_loss.iloc[0]
-    for i in range(1, len(close)):
-        src = float(close.iloc[i])
-        prev_src = float(close.iloc[i - 1])
-        prev_stop = float(trailing_stop.iloc[i - 1])
-        loss = float(n_loss.iloc[i])
-
-        if src > prev_stop and prev_src > prev_stop:
-            stop = max(prev_stop, src - loss)
-        elif src < prev_stop and prev_src < prev_stop:
-            stop = min(prev_stop, src + loss)
-        elif src > prev_stop:
-            stop = src - loss
-        else:
-            stop = src + loss
-
-        trailing_stop.iloc[i] = stop
-        crossed_above = prev_src <= prev_stop and src > stop
-        crossed_below = prev_src >= prev_stop and src < stop
-        buy_signal.iloc[i] = crossed_above
-        sell_signal.iloc[i] = crossed_below
-
     markers: list[dict[str, str]] = []
-    for ts in close.index[buy_signal]:
+    for ts in trailing_stop.index[buy_signal]:
         markers.append({"time": str(ts.date()), "position": "belowBar", "color": "#22c55e", "shape": "arrowUp", "text": "UT Buy"})
-    for ts in close.index[sell_signal]:
+    for ts in trailing_stop.index[sell_signal]:
         markers.append({"time": str(ts.date()), "position": "aboveBar", "color": "#ef4444", "shape": "arrowDown", "text": "UT Sell"})
     markers.sort(key=lambda marker: marker["time"])
 

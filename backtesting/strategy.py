@@ -13,6 +13,66 @@ class Strategy(ABC):
         """Return a Series aligned with `data.index` containing -1, 0, or 1."""
 
 
+def compute_ut_bot_components(
+    data: pd.DataFrame,
+    key_value: float = 1.0,
+    atr_period: int = 10,
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+    """Compute UT Bot trailing stop and directional signals."""
+    high = data["high"].astype("float64")
+    low = data["low"].astype("float64")
+    close = data["close"].astype("float64")
+    prev_close = close.shift(1)
+
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = true_range.ewm(alpha=1.0 / float(atr_period), adjust=False).mean()
+    n_loss = key_value * atr
+
+    trailing_stop = pd.Series(index=close.index, dtype="float64")
+    buy_signal = pd.Series(False, index=close.index, dtype="bool")
+    sell_signal = pd.Series(False, index=close.index, dtype="bool")
+    position_state = pd.Series(0, index=close.index, dtype="int8")
+    if len(close) == 0:
+        return trailing_stop, buy_signal, sell_signal, position_state
+
+    trailing_stop.iloc[0] = close.iloc[0] - n_loss.iloc[0]
+    pos = 0
+    for i in range(1, len(close)):
+        src = float(close.iloc[i])
+        prev_src = float(close.iloc[i - 1])
+        prev_stop = float(trailing_stop.iloc[i - 1])
+        loss = float(n_loss.iloc[i])
+
+        if src > prev_stop and prev_src > prev_stop:
+            stop = max(prev_stop, src - loss)
+        elif src < prev_stop and prev_src < prev_stop:
+            stop = min(prev_stop, src + loss)
+        elif src > prev_stop:
+            stop = src - loss
+        else:
+            stop = src + loss
+
+        trailing_stop.iloc[i] = stop
+        buy = prev_src <= prev_stop and src > stop
+        sell = prev_src >= prev_stop and src < stop
+        buy_signal.iloc[i] = buy
+        sell_signal.iloc[i] = sell
+        if buy:
+            pos = 1
+        elif sell:
+            pos = -1
+        position_state.iloc[i] = pos
+
+    return trailing_stop, buy_signal, sell_signal, position_state
+
+
 class BuyAndHoldStrategy(Strategy):
     """Long from the first bar through the end of the dataset."""
 
@@ -56,51 +116,9 @@ class UTBotStrategy(Strategy):
         self.atr_period = int(atr_period)
 
     def generate_signals(self, data: pd.DataFrame) -> pd.Series:
-        high = data["high"].astype("float64")
-        low = data["low"].astype("float64")
-        close = data["close"].astype("float64")
-        prev_close = close.shift(1)
-
-        true_range = pd.concat(
-            [
-                high - low,
-                (high - prev_close).abs(),
-                (low - prev_close).abs(),
-            ],
-            axis=1,
-        ).max(axis=1)
-        atr = true_range.ewm(alpha=1.0 / float(self.atr_period), adjust=False).mean()
-        n_loss = self.key_value * atr
-
-        trailing_stop = pd.Series(index=close.index, dtype="float64")
-        signals = pd.Series(0, index=close.index, dtype="int8")
-        if len(close) == 0:
-            return signals
-
-        trailing_stop.iloc[0] = close.iloc[0] - n_loss.iloc[0]
-        pos = 0
-        for i in range(1, len(close)):
-            src = float(close.iloc[i])
-            prev_src = float(close.iloc[i - 1])
-            prev_stop = float(trailing_stop.iloc[i - 1])
-            loss = float(n_loss.iloc[i])
-
-            if src > prev_stop and prev_src > prev_stop:
-                stop = max(prev_stop, src - loss)
-            elif src < prev_stop and prev_src < prev_stop:
-                stop = min(prev_stop, src + loss)
-            elif src > prev_stop:
-                stop = src - loss
-            else:
-                stop = src + loss
-
-            trailing_stop.iloc[i] = stop
-            buy = prev_src <= prev_stop and src > stop and src > stop
-            sell = prev_src >= prev_stop and src < stop and src < stop
-            if buy:
-                pos = 1
-            elif sell:
-                pos = -1
-            signals.iloc[i] = pos
-
+        _, _, _, signals = compute_ut_bot_components(
+            data=data,
+            key_value=self.key_value,
+            atr_period=self.atr_period,
+        )
         return signals

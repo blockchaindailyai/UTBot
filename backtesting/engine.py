@@ -114,6 +114,31 @@ class BacktestEngine:
             equity_values.append(float(mark_to_market))
             positions.append(0 if units == 0 else (1 if units > 0 else -1))
 
+        if units != 0:
+            final_price = float(close.iloc[-1])
+            final_ts = data.index[-1]
+            side = 1 if units > 0 else -1
+            fill = final_price * (1.0 - self.config.slippage_rate * side)
+            gross = (fill - entry_price) * units
+            fee = abs(fill * units) * self.config.fee_rate
+            pnl = gross - fee
+            capital += pnl
+            trade = Trade(
+                side="long" if units > 0 else "short",
+                entry_time=entry_time if entry_time is not None else final_ts,
+                exit_time=final_ts,
+                entry_price=entry_price,
+                exit_price=fill,
+                units=abs(units),
+                pnl=float(pnl),
+                return_pct=float(pnl / self.config.initial_capital) if self.config.initial_capital else 0.0,
+                holding_bars=(len(data) - 1) - entry_index,
+            )
+            trades.append(trade)
+            units = 0.0
+            positions[-1] = 0
+            equity_values[-1] = float(capital)
+
         equity = pd.Series(equity_values, index=data.index, dtype="float64")
         returns = equity.pct_change().fillna(0.0)
         positions_series = pd.Series(positions, index=data.index, dtype="int8")

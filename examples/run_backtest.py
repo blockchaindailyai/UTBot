@@ -59,6 +59,7 @@ def main() -> None:
         strategy = UTBotStrategy(key_value=args.ut_key_value, atr_period=args.ut_atr_period)
     else:
         raise ValueError("Unsupported strategy. Use one of: buy_hold, ma_cross, ut_bot")
+    print(f"Selected strategy: {strategy_name}")
     engine = BacktestEngine(
         BacktestConfig(
             initial_capital=args.capital,
@@ -70,6 +71,7 @@ def main() -> None:
         )
     )
     result = engine.run(data, strategy)
+    print(f"Generated trades: {len(result.trades)}")
 
     (out_dir / "stats.json").write_text(json.dumps(result.stats, indent=2), encoding="utf-8")
     result.trades_dataframe().to_csv(out_dir / "trades.csv", index=False)
