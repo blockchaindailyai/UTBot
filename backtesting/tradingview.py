@@ -244,3 +244,63 @@ alertcondition(bearishReverseSignal, "Bearish Reverse After Bullish 1st Wiseman"
     output = Path(output_path)
     output.write_text(pine, encoding="utf-8")
     return str(output)
+
+
+def generate_ut_bot_strategy_pinescript(
+    output_path: str,
+    title: str = "UT Bot Alerts Strategy",
+) -> str:
+    """Generate a Pine Script strategy based on UT Bot buy/sell alert logic."""
+    pine = f'''//@version=5
+strategy("{title}", overlay=true, pyramiding=0, process_orders_on_close=true)
+
+// Inputs
+a = input.float(1.0, title="Key Value. 'This changes the sensitivity'")
+c = input.int(10, title="ATR Period")
+h = input.bool(false, title="Signals from Heikin Ashi Candles")
+
+xATR = ta.atr(c)
+nLoss = a * xATR
+
+haClose = request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close, lookahead=barmerge.lookahead_off)
+src = h ? haClose : close
+
+var float xATRTrailingStop = na
+prevStop = nz(xATRTrailingStop[1], src)
+if src > prevStop and src[1] > prevStop
+    xATRTrailingStop := math.max(prevStop, src - nLoss)
+else if src < prevStop and src[1] < prevStop
+    xATRTrailingStop := math.min(prevStop, src + nLoss)
+else if src > prevStop
+    xATRTrailingStop := src - nLoss
+else
+    xATRTrailingStop := src + nLoss
+
+ema1 = ta.ema(src, 1)
+above = ta.crossover(ema1, xATRTrailingStop)
+below = ta.crossover(xATRTrailingStop, ema1)
+
+buy = src > xATRTrailingStop and above
+sell = src < xATRTrailingStop and below
+
+if buy and strategy.position_size <= 0
+    strategy.close("Short")
+    strategy.entry("Long", strategy.long)
+
+if sell and strategy.position_size >= 0
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+
+plotshape(buy, title="Buy", text="Buy", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+plotshape(sell, title="Sell", text="Sell", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+
+barcolor(src > xATRTrailingStop ? color.new(color.green, 0) : src < xATRTrailingStop ? color.new(color.red, 0) : na)
+plot(xATRTrailingStop, "ATR Trailing Stop", color=color.new(color.orange, 0), linewidth=2)
+
+alertcondition(buy, "UT Long", "UT Long")
+alertcondition(sell, "UT Short", "UT Short")
+'''
+
+    output = Path(output_path)
+    output.write_text(pine, encoding="utf-8")
+    return str(output)
