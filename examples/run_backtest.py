@@ -35,8 +35,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slow", type=int, default=50)
     parser.add_argument("--ut-key-value", type=float, default=1.0)
     parser.add_argument("--ut-atr-period", type=int, default=10)
-    parser.add_argument("--size", type=float, default=1.0)
-    parser.add_argument("--contracts", type=float, default=1.0)
+    parser.add_argument(
+        "--size-mode",
+        type=str,
+        default="equity_percent",
+        choices=["static_usd", "equity_percent", "volatility_scaled"],
+    )
+    parser.add_argument("--size-value", type=float, default=1.0)
+    parser.add_argument("--volatility-target-annual", type=float, default=0.20)
+    parser.add_argument("--volatility-lookback", type=int, default=20)
+    parser.add_argument("--volatility-min-scale", type=float, default=0.25)
+    parser.add_argument("--volatility-max-scale", type=float, default=3.0)
     parser.add_argument("--start", type=str, default=None)
     parser.add_argument("--end", type=str, default=None)
     return parser
@@ -65,8 +74,12 @@ def main() -> None:
             initial_capital=args.capital,
             fee_rate=args.fee,
             slippage_rate=args.slippage,
-            size=args.size,
-            contracts=args.contracts,
+            position_size_mode=args.size_mode,
+            position_size_value=args.size_value,
+            volatility_target_annual=args.volatility_target_annual,
+            volatility_lookback=args.volatility_lookback,
+            volatility_min_scale=args.volatility_min_scale,
+            volatility_max_scale=args.volatility_max_scale,
             execute_on_signal_bar=strategy_name in {"ut_bot", "utbot"},
         )
     )

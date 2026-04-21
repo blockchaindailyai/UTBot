@@ -15,6 +15,12 @@ class BacktestConfig:
     slippage_rate: float = 0.0
     size: float = 1.0
     contracts: float = 1.0
+    position_size_mode: str = "equity_percent"
+    position_size_value: float = 1.0
+    volatility_target_annual: float = 0.20
+    volatility_lookback: int = 20
+    volatility_min_scale: float = 0.25
+    volatility_max_scale: float = 3.0
     execute_on_signal_bar: bool = False
 
 
@@ -58,9 +64,20 @@ class BacktestEngine:
             raise ValueError("size must be positive")
         if self.config.contracts <= 0:
             raise ValueError("contracts must be positive")
+        if self.config.position_size_value <= 0:
+            raise ValueError("position_size_value must be positive")
+        if self.config.volatility_lookback <= 1:
+            raise ValueError("volatility_lookback must be greater than 1")
+        if self.config.volatility_target_annual <= 0:
+            raise ValueError("volatility_target_annual must be positive")
+        if self.config.volatility_min_scale <= 0 or self.config.volatility_max_scale <= 0:
+            raise ValueError("volatility scale bounds must be positive")
+        if self.config.volatility_min_scale > self.config.volatility_max_scale:
+            raise ValueError("volatility_min_scale must be <= volatility_max_scale")
 
         signals = strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
         close = data["close"].astype("float64")
+        close_returns = close.pct_change().fillna(0.0)
 
         capital = float(self.config.initial_capital)
         equity_values = [capital]
@@ -102,7 +119,11 @@ class BacktestEngine:
 
             if units == 0 and desired_signal != 0:
                 fill = price * (1.0 + self.config.slippage_rate * desired_signal)
-                notional = capital * self.config.size * self.config.contracts
+                notional = self._compute_position_notional(
+                    capital=capital,
+                    close_returns=close_returns,
+                    bar_index=i,
+                )
                 fee = notional * self.config.fee_rate
                 units = (notional / fill) * desired_signal
                 entry_price = fill
@@ -158,4 +179,27 @@ class BacktestEngine:
             positions=positions_series,
             trades=trades,
             stats=stats,
+        )
+
+    def _compute_position_notional(self, capital: float, close_returns: pd.Series, bar_index: int) -> float:
+        mode = self.config.position_size_mode.strip().lower()
+        if mode == "static_usd":
+            return float(self.config.position_size_value)
+
+        base_equity_notional = capital * self.config.position_size_value
+        if mode == "equity_percent":
+            return float(base_equity_notional)
+
+        if mode == "volatility_scaled":
+            window = close_returns.iloc[max(0, bar_index - self.config.volatility_lookback) : bar_index]
+            realized_vol = float(window.std(ddof=0) * (252.0 ** 0.5)) if len(window) > 1 else 0.0
+            if realized_vol <= 0:
+                scale = 1.0
+            else:
+                scale = self.config.volatility_target_annual / realized_vol
+            scale = max(self.config.volatility_min_scale, min(scale, self.config.volatility_max_scale))
+            return float(base_equity_notional * scale)
+
+        raise ValueError(
+            "position_size_mode must be one of: static_usd, equity_percent, volatility_scaled"
         )

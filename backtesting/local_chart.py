@@ -176,6 +176,7 @@ if (!window.LightweightCharts) {{
     layout: {{ background: {{ color: '#0f172a' }}, textColor: '#e2e8f0' }},
     grid: {{ vertLines: {{ color: '#1e293b' }}, horzLines: {{ color: '#1e293b' }} }},
     rightPriceScale: {{ borderColor: '#334155' }},
+    leftPriceScale: {{ borderColor: '#334155', visible: true }},
     timeScale: {{ borderColor: '#334155' }},
     width: chartEl.clientWidth,
     height: 560,
@@ -210,7 +211,12 @@ if (!window.LightweightCharts) {{
   }}
   renderTradeEventLines(payload.tradeEventLines);
 
-  const equitySeries = chart.addLineSeries({{ color: '#22c55e', lineWidth: 2 }});
+  const equitySeries = chart.addLineSeries({{
+    color: '#22c55e',
+    lineWidth: 2,
+    priceScaleId: 'left',
+    title: 'Equity',
+  }});
   equitySeries.setData(payload.equity.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
   const utStopSeries = chart.addLineSeries({{ color: '#f59e0b', lineWidth: 2 }});
   utStopSeries.setData(payload.utBot.trailing_stop.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
