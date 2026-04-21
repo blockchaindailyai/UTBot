@@ -15,6 +15,69 @@ def _to_points(series: pd.Series) -> list[dict[str, float | str]]:
     ]
 
 
+def _ut_bot_payload(
+    data: pd.DataFrame,
+    key_value: float = 1.0,
+    atr_period: int = 10,
+) -> dict[str, list[dict[str, float | str]]]:
+    high = data["high"].astype("float64")
+    low = data["low"].astype("float64")
+    close = data["close"].astype("float64")
+    prev_close = close.shift(1)
+
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = true_range.ewm(alpha=1.0 / float(atr_period), adjust=False).mean()
+    n_loss = key_value * atr
+
+    trailing_stop = pd.Series(index=close.index, dtype="float64")
+    buy_signal = pd.Series(False, index=close.index, dtype="bool")
+    sell_signal = pd.Series(False, index=close.index, dtype="bool")
+
+    if len(close) == 0:
+        return {"trailing_stop": [], "markers": []}
+
+    trailing_stop.iloc[0] = close.iloc[0] - n_loss.iloc[0]
+    for i in range(1, len(close)):
+        src = float(close.iloc[i])
+        prev_src = float(close.iloc[i - 1])
+        prev_stop = float(trailing_stop.iloc[i - 1])
+        loss = float(n_loss.iloc[i])
+
+        if src > prev_stop and prev_src > prev_stop:
+            stop = max(prev_stop, src - loss)
+        elif src < prev_stop and prev_src < prev_stop:
+            stop = min(prev_stop, src + loss)
+        elif src > prev_stop:
+            stop = src - loss
+        else:
+            stop = src + loss
+
+        trailing_stop.iloc[i] = stop
+        crossed_above = prev_src <= prev_stop and src > stop
+        crossed_below = prev_src >= prev_stop and src < stop
+        buy_signal.iloc[i] = crossed_above
+        sell_signal.iloc[i] = crossed_below
+
+    markers: list[dict[str, str]] = []
+    for ts in close.index[buy_signal]:
+        markers.append({"time": str(ts.date()), "position": "belowBar", "color": "#22c55e", "shape": "arrowUp", "text": "UT Buy"})
+    for ts in close.index[sell_signal]:
+        markers.append({"time": str(ts.date()), "position": "aboveBar", "color": "#ef4444", "shape": "arrowDown", "text": "UT Sell"})
+    markers.sort(key=lambda marker: marker["time"])
+
+    return {
+        "trailing_stop": _to_points(trailing_stop),
+        "markers": markers,
+    }
+
+
 def generate_local_tradingview_chart(
     data: pd.DataFrame,
     result: BacktestResult,
@@ -37,6 +100,7 @@ def generate_local_tradingview_chart(
         "equity": _to_points(result.equity_curve.astype("float64")),
         "position": _to_points(result.positions.astype("float64")),
     }
+    payload["utBot"] = _ut_bot_payload(data)
 
     html = f"""<!doctype html>
 <html>
@@ -83,11 +147,14 @@ if (!window.LightweightCharts) {{
 
   const candleSeries = chart.addCandlestickSeries();
   candleSeries.setData(payload.candles);
+  candleSeries.setMarkers(payload.utBot.markers);
 
   const equitySeries = chart.addLineSeries({{ color: '#22c55e', lineWidth: 2 }});
   equitySeries.setData(payload.equity.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
+  const utStopSeries = chart.addLineSeries({{ color: '#f59e0b', lineWidth: 2 }});
+  utStopSeries.setData(payload.utBot.trailing_stop.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
 
-  statusEl.textContent = 'Candles + equity rendered with Lightweight Charts.';
+  statusEl.textContent = 'Candles + equity + UT Bot trailing stop/signals rendered with Lightweight Charts.';
   window.addEventListener('resize', () => {{
     chart.applyOptions({{ width: chartEl.clientWidth }});
   }});
