@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WilliamsBot Live KCEX Chart</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #0b1220;
+      --border: #1f2937;
+      --grid: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #93c5fd;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+      padding: 10px 14px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    label {
+      font-size: 13px;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    select, input[type="checkbox"] { accent-color: #22c55e; }
+    select {
+      background: #1f2937;
+      color: #f8fafc;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 6px 8px;
+    }
+    .indicators { display: flex; flex-wrap: wrap; gap: 10px; }
+    #status { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .chart-stack {
+      display: grid;
+      grid-template-rows: minmax(360px, 1fr) 140px 140px;
+      height: calc(100vh - 64px);
+      width: 100%;
+      background: var(--panel-2);
+    }
+    .pane {
+      position: relative;
+      border-bottom: 1px solid var(--border);
+    }
+    .pane:last-child { border-bottom: none; }
+    .pane-label {
+      position: absolute;
+      top: 8px;
+      left: 10px;
+      z-index: 5;
+      font-size: 12px;
+      color: var(--muted);
+      background: rgba(15, 23, 42, 0.75);
+      padding: 2px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+    .chart-host {
+      position: absolute;
+      inset: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <label>Asset
+      <select id="assetSelect"></select>
+    </label>
+    <label>Timeframe
+      <select id="timeframeSelect"></select>
+    </label>
+
+    <div class="indicators">
+      <label><input id="showAlligator" type="checkbox" checked /> Alligator (Jaw/Teeth/Lips)</label>
+      <label><input id="showAO" type="checkbox" checked /> AO pane</label>
+      <label><input id="showAC" type="checkbox" checked /> AC pane</label>
+      <label><input id="showZones" type="checkbox" checked /> Williams Zones candle colors</label>
+      <label><input id="showWisemanSignals" type="checkbox" checked /> Wiseman 1W / 1W-R signals</label>
+      <label><input id="showSecondWiseman" type="checkbox" checked /> 2W signals / entries</label>
+      <label><input id="showThirdWiseman" type="checkbox" checked /> 3W signals / entries</label>
+    </div>
+
+    <div id="status">Loading...</div>
+  </div>
+
+  <div class="chart-stack" id="chartStack">
+    <div class="pane" id="pricePane">
+      <div class="pane-label">Price</div>
+      <div class="chart-host" id="priceChart"></div>
+    </div>
+    <div class="pane" id="aoPane">
+      <div class="pane-label">AO</div>
+      <div class="chart-host" id="aoChart"></div>
+    </div>
+    <div class="pane" id="acPane">
+      <div class="pane-label">AC</div>
+      <div class="chart-host" id="acChart"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const assetSelect = document.getElementById('assetSelect');
+    const timeframeSelect = document.getElementById('timeframeSelect');
+    const showAlligatorEl = document.getElementById('showAlligator');
+    const showAOEl = document.getElementById('showAO');
+    const showACEl = document.getElementById('showAC');
+    const showZonesEl = document.getElementById('showZones');
+    const showWisemanSignalsEl = document.getElementById('showWisemanSignals');
+    const showSecondWisemanEl = document.getElementById('showSecondWiseman');
+    const showThirdWisemanEl = document.getElementById('showThirdWiseman');
+    const pricePaneEl = document.getElementById('pricePane');
+    const aoPaneEl = document.getElementById('aoPane');
+    const acPaneEl = document.getElementById('acPane');
+    const priceHostEl = document.getElementById('priceChart');
+    const aoHostEl = document.getElementById('aoChart');
+    const acHostEl = document.getElementById('acChart');
+
+    const intervalSecondsMap = {
+      Min1: 60,
+      Min3: 180,
+      Min5: 300,
+      Min15: 900,
+      Min30: 1800,
+      Min60: 3600,
+      Hour4: 14400,
+      Hour12: 43200,
+      Day1: 86400,
+    };
+
+    const baseChartOptions = {
+      layout: { background: { color: '#0f172a' }, textColor: '#cbd5e1' },
+      grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+      rightPriceScale: { borderColor: '#334155', minimumWidth: 72 },
+      timeScale: { borderColor: '#334155', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    };
+
+    const sharedInteractionOptions = {
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: false },
+    };
+
+    const priceChart = LightweightCharts.createChart(priceHostEl, {
+      ...baseChartOptions,
+      ...sharedInteractionOptions,
+    });
+    const aoChart = LightweightCharts.createChart(aoHostEl, {
+      ...baseChartOptions,
+      ...sharedInteractionOptions,
+      rightPriceScale: { borderColor: '#334155', minimumWidth: 72, scaleMargins: { top: 0.15, bottom: 0.15 } },
+      leftPriceScale: { visible: false },
+      timeScale: { visible: false, borderColor: '#334155', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+    const acChart = LightweightCharts.createChart(acHostEl, {
+      ...baseChartOptions,
+      ...sharedInteractionOptions,
+      rightPriceScale: { borderColor: '#334155', minimumWidth: 72, scaleMargins: { top: 0.15, bottom: 0.15 } },
+      leftPriceScale: { visible: false },
+      timeScale: { borderColor: '#334155', visible: true, timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+
+    const candleSeries = priceChart.addCandlestickSeries({
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderVisible: false,
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+    });
+    const jawSeries = priceChart.addLineSeries({ color: '#2563eb', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+    const teethSeries = priceChart.addLineSeries({ color: '#ef4444', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+    const lipsSeries = priceChart.addLineSeries({ color: '#22c55e', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+    candleSeries.setMarkers([]);
+    let tradeEventLineSeries = [];
+    let tradePathLineSeries = [];
+
+    const aoSeries = aoChart.addHistogramSeries({
+      base: 0,
+      priceLineVisible: false,
+      lastValueVisible: true,
+    });
+    const acSeries = acChart.addHistogramSeries({
+      base: 0,
+      priceLineVisible: false,
+      lastValueVisible: true,
+    });
+
+    let activeSymbol = '';
+    let activeInterval = '';
+    let hasFittedInitialRange = false;
+    let syncGuard = false;
+    let sharedLogicalRange = null;
+    let lastSelectionGeneration = null;
+    let lastMarketRevision = null;
+    let lastStrategyRevision = null;
+    let lastPriceCandles = [];
+    let lastJawPoints = [];
+    let lastTeethPoints = [];
+    let lastLipsPoints = [];
+    let lastAOPoints = [];
+    let lastACPoints = [];
+
+    function normalizeCandles(candles) {
+      const rows = [];
+      for (const c of (Array.isArray(candles) ? candles : [])) {
+        const t = Number(c.time);
+        const o = Number(c.open);
+        const h = Number(c.high);
+        const l = Number(c.low);
+        const cl = Number(c.close);
+        if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(cl)) continue;
+        const sec = t > 1e10 ? Math.floor(t / 1000) : Math.floor(t);
+        const row = { time: sec, open: o, high: h, low: l, close: cl };
+        if (typeof c.color === 'string') row.color = c.color;
+        if (typeof c.borderColor === 'string') row.borderColor = c.borderColor;
+        if (typeof c.wickColor === 'string') row.wickColor = c.wickColor;
+        rows.push(row);
+      }
+      rows.sort((a, b) => a.time - b.time);
+      return rows;
+    }
+
+    function stripCandleOverrides(candles) {
+      return candles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }));
+    }
+
+    function toMedianPrices(candles) {
+      return candles.map((c) => (c.high + c.low) / 2);
+    }
+
+    function simpleMovingAverage(values, period) {
+      const out = new Array(values.length).fill(null);
+      let sum = 0;
+      let count = 0;
+      for (let i = 0; i < values.length; i++) {
+        const val = values[i];
+        if (val != null && Number.isFinite(val)) {
+          sum += val;
+          count += 1;
+        }
+        const old = i >= period ? values[i - period] : null;
+        if (old != null && Number.isFinite(old)) {
+          sum -= old;
+          count -= 1;
+        }
+        if (i >= period - 1 && count === period) {
+          out[i] = sum / period;
+        }
+      }
+      return out;
+    }
+
+    function smoothedMovingAverage(values, period) {
+      const out = new Array(values.length).fill(null);
+      if (values.length < period) return out;
+
+      let seedSum = 0;
+      for (let i = 0; i < period; i++) seedSum += values[i];
+      out[period - 1] = seedSum / period;
+
+      for (let i = period; i < values.length; i++) {
+        out[i] = ((out[i - 1] * (period - 1)) + values[i]) / period;
+      }
+      return out;
+    }
+
+    function inferStepSeconds(candles, fallbackSeconds) {
+      if (candles.length < 2) return fallbackSeconds;
+      const diffs = [];
+      for (let i = 1; i < candles.length; i++) {
+        const diff = candles[i].time - candles[i - 1].time;
+        if (diff > 0) diffs.push(diff);
+      }
+      if (!diffs.length) return fallbackSeconds;
+      diffs.sort((a, b) => a - b);
+      return diffs[Math.floor(diffs.length / 2)] || fallbackSeconds;
+    }
+
+    function shiftValuesForSignal(values, shiftBars) {
+      const out = new Array(values.length).fill(null);
+      for (let i = 0; i < values.length; i++) {
+        const value = values[i];
+        if (value == null || !Number.isFinite(value)) continue;
+        const shiftedIndex = i + shiftBars;
+        if (shiftedIndex < values.length) out[shiftedIndex] = value;
+      }
+      return out;
+    }
+
+    function shiftedSeries(candles, values, shiftBars, stepSeconds) {
+      const out = [];
+      for (let i = 0; i < values.length; i++) {
+        const value = values[i];
+        if (value == null || !Number.isFinite(value)) continue;
+
+        const shiftedIndex = i + shiftBars;
+        const time = shiftedIndex < candles.length
+          ? candles[shiftedIndex].time
+          : candles[candles.length - 1].time + ((shiftedIndex - candles.length + 1) * stepSeconds);
+        out.push({ time, value });
+      }
+      return out;
+    }
+
+    function buildWisemanMarkers(candles, jawSignal, teethSignal, lipsSignal, aoValues) {
+      const markers = [];
+
+      let bearishCandidateActive = false;
+      let bearishHigh = 0;
+      let bearishLow = 0;
+      let bearishTime = null;
+      let bearishReverseWatch = false;
+      let bearishReverseSourceHigh = 0;
+      let bearishReverseConfirmedIndex = -1;
+
+      let bullishCandidateActive = false;
+      let bullishHigh = 0;
+      let bullishLow = 0;
+      let bullishTime = null;
+      let bullishReverseWatch = false;
+      let bullishReverseSourceLow = 0;
+      let bullishReverseConfirmedIndex = -1;
+
+      for (let i = 2; i < candles.length; i++) {
+        const prev = candles[i - 1];
+        const prev2 = candles[i - 2];
+        const now = candles[i];
+        const jaw = jawSignal[i - 1];
+        const teeth = teethSignal[i - 1];
+        const lips = lipsSignal[i - 1];
+        const midpoint = (prev.high + prev.low) / 2;
+        const gatorWidthValid = [jaw, teeth, lips].every((v) => v != null && Number.isFinite(v))
+          ? Math.abs(teeth - lips) < Math.abs(lips - midpoint)
+          : false;
+        const gatorUp = lips != null && teeth != null && jaw != null && lips > teeth && teeth > jaw;
+        const gatorDown = lips != null && teeth != null && jaw != null && lips < teeth && teeth < jaw;
+        const aoGreen = aoValues[i - 1] != null && aoValues[i - 2] != null && aoValues[i - 1] > aoValues[i - 2];
+        const aoRed = aoValues[i - 1] != null && aoValues[i - 2] != null && aoValues[i - 1] < aoValues[i - 2];
+
+        const bearishCandidate = (
+          prev.high > prev2.high && prev.high > now.high
+          && prev.open > prev.close
+          && gatorUp
+          && gatorWidthValid
+          && aoGreen
+        );
+        if (bearishCandidate && !bearishReverseWatch) {
+          bearishCandidateActive = true;
+          bearishHigh = prev.high;
+          bearishLow = prev.low;
+          bearishTime = prev.time;
+        }
+        if (bearishCandidateActive) {
+          if (now.high > bearishHigh) {
+            bearishCandidateActive = false;
+            bearishTime = null;
+          } else if (now.low < bearishLow && bearishTime != null) {
+            markers.push({ time: bearishTime, position: 'aboveBar', color: '#dc2626', shape: 'arrowDown', text: '1W' });
+            bearishReverseWatch = true;
+            bearishReverseSourceHigh = bearishHigh;
+            bearishReverseConfirmedIndex = i;
+            bearishCandidateActive = false;
+            bearishTime = null;
+          }
+        }
+        if (bearishReverseWatch && i > bearishReverseConfirmedIndex && now.high > bearishReverseSourceHigh) {
+          markers.push({ time: now.time, position: 'belowBar', color: '#16a34a', shape: 'arrowUp', text: '1W-R' });
+          bearishReverseWatch = false;
+        }
+
+        const bullishCandidate = (
+          prev.low < prev2.low && prev.low < now.low
+          && prev.close > prev.open
+          && gatorDown
+          && gatorWidthValid
+          && aoRed
+        );
+        if (bullishCandidate && !bullishReverseWatch) {
+          bullishCandidateActive = true;
+          bullishHigh = prev.high;
+          bullishLow = prev.low;
+          bullishTime = prev.time;
+        }
+        if (bullishCandidateActive) {
+          if (now.low < bullishLow) {
+            bullishCandidateActive = false;
+            bullishTime = null;
+          } else if (now.high > bullishHigh && bullishTime != null) {
+            markers.push({ time: bullishTime, position: 'belowBar', color: '#16a34a', shape: 'arrowUp', text: '1W' });
+            bullishReverseWatch = true;
+            bullishReverseSourceLow = bullishLow;
+            bullishReverseConfirmedIndex = i;
+            bullishCandidateActive = false;
+            bullishTime = null;
+          }
+        }
+        if (bullishReverseWatch && i > bullishReverseConfirmedIndex && now.low < bullishReverseSourceLow) {
+          markers.push({ time: now.time, position: 'aboveBar', color: '#dc2626', shape: 'arrowDown', text: '1W-R' });
+          bullishReverseWatch = false;
+        }
+      }
+
+      markers.sort((a, b) => a.time - b.time);
+      return markers;
+    }
+
+    function calculateIndicators(candles, interval) {
+      const step = inferStepSeconds(candles, intervalSecondsMap[interval] || 60);
+      const medians = toMedianPrices(candles);
+
+      const jaw = smoothedMovingAverage(medians, 13);
+      const teeth = smoothedMovingAverage(medians, 8);
+      const lips = smoothedMovingAverage(medians, 5);
+
+      const jawSignal = shiftValuesForSignal(jaw, 8);
+      const teethSignal = shiftValuesForSignal(teeth, 5);
+      const lipsSignal = shiftValuesForSignal(lips, 3);
+
+      const jawShifted = shiftedSeries(candles, jaw, 8, step);
+      const teethShifted = shiftedSeries(candles, teeth, 5, step);
+      const lipsShifted = shiftedSeries(candles, lips, 3, step);
+
+      const sma5 = simpleMovingAverage(medians, 5);
+      const sma34 = simpleMovingAverage(medians, 34);
+      const ao = medians.map((_, i) => (sma5[i] != null && sma34[i] != null ? sma5[i] - sma34[i] : null));
+      const aoSignal = simpleMovingAverage(ao, 5);
+      const ac = ao.map((value, i) => (value != null && aoSignal[i] != null ? value - aoSignal[i] : null));
+
+      const aoHistogram = [];
+      const acHistogram = [];
+      const aoByTime = new Map();
+      const acByTime = new Map();
+
+      for (let i = 0; i < candles.length; i++) {
+        const time = candles[i].time;
+        const aoValue = ao[i];
+        if (aoValue != null) {
+          const prev = i > 0 ? ao[i - 1] : null;
+          aoHistogram.push({
+            time,
+            value: aoValue,
+            color: prev != null && aoValue >= prev ? '#22c55e' : '#ef4444',
+          });
+          aoByTime.set(time, aoValue);
+        }
+
+        const acValue = ac[i];
+        if (acValue != null) {
+          const prevAc = i > 0 ? ac[i - 1] : null;
+          acHistogram.push({
+            time,
+            value: acValue,
+            color: prevAc != null && acValue >= prevAc ? '#14b8a6' : '#f97316',
+          });
+          acByTime.set(time, acValue);
+        }
+      }
+
+      const wisemanMarkers = buildWisemanMarkers(candles, jawSignal, teethSignal, lipsSignal, ao);
+      return { jawShifted, teethShifted, lipsShifted, aoHistogram, acHistogram, aoByTime, acByTime, wisemanMarkers };
+    }
+
+    function candlesWithZones(candles, aoByTime, acByTime, zonesEnabled) {
+      if (!zonesEnabled) return candles;
+      return candles.map((candle) => {
+        const ao = aoByTime.get(candle.time);
+        const ac = acByTime.get(candle.time);
+        if (ao == null || ac == null) return candle;
+        if (ao > 0 && ac > 0) {
+          return { ...candle, color: '#16a34a', wickColor: '#16a34a', borderColor: '#16a34a' };
+        }
+        if (ao < 0 && ac < 0) {
+          return { ...candle, color: '#dc2626', wickColor: '#dc2626', borderColor: '#dc2626' };
+        }
+        return { ...candle, color: '#64748b', wickColor: '#64748b', borderColor: '#64748b' };
+      });
+    }
+
+    function applyPaneVisibility() {
+      aoPaneEl.style.display = showAOEl.checked ? 'block' : 'none';
+      acPaneEl.style.display = showACEl.checked ? 'block' : 'none';
+      resizeCharts();
+    }
+
+    function filterMarkers(markers) {
+      return (Array.isArray(markers) ? markers : []).filter((marker) => {
+        const text = String(marker?.text || '');
+        const group = String(marker?.markerGroup || '');
+        const hasThirdWisemanLabel = text.includes('3W');
+        if (!showSecondWisemanEl.checked && (group === 'second_wiseman' || group === 'second_wiseman_entry')) return false;
+        if (!showThirdWisemanEl.checked && (group === 'third_wiseman' || group === 'third_wiseman_entry' || hasThirdWisemanLabel)) return false;
+        return true;
+      });
+    }
+
+    function maxTimeInSeries(points) {
+      let max = null;
+      for (const point of (Array.isArray(points) ? points : [])) {
+        const time = Number(point?.time);
+        if (Number.isFinite(time) && (max == null || time > max)) max = time;
+      }
+      return max;
+    }
+
+    function maxPayloadTime(payload) {
+      const candidates = [
+        maxTimeInSeries(payload?.candles),
+        maxTimeInSeries(payload?.alligator?.jaw),
+        maxTimeInSeries(payload?.alligator?.teeth),
+        maxTimeInSeries(payload?.alligator?.lips),
+        maxTimeInSeries(payload?.ao),
+        maxTimeInSeries(payload?.ac),
+      ].filter((value) => value != null);
+      return candidates.length ? Math.max(...candidates) : null;
+    }
+
+    function padCandles(candles, maxTime, stepSeconds) {
+      if (!candles.length || maxTime == null || !Number.isFinite(stepSeconds) || stepSeconds <= 0) return candles;
+      const padded = candles.map((candle) => ({ ...candle }));
+      let nextTime = Number(padded[padded.length - 1].time) + stepSeconds;
+      while (nextTime <= maxTime) {
+        padded.push({ time: nextTime });
+        nextTime += stepSeconds;
+      }
+      return padded;
+    }
+
+    function padWhitespaceSeries(points, maxTime, stepSeconds) {
+      if (!points.length || maxTime == null || !Number.isFinite(stepSeconds) || stepSeconds <= 0) return points;
+      const padded = points.map((point) => ({ ...point }));
+      let lastTime = maxTimeInSeries(padded);
+      if (lastTime == null) return padded;
+      let nextTime = lastTime + stepSeconds;
+      while (nextTime <= maxTime) {
+        padded.push({ time: nextTime });
+        nextTime += stepSeconds;
+      }
+      return padded;
+    }
+
+    function logicalRangesEqual(left, right) {
+      if (!left || !right) return false;
+      return Math.abs(Number(left.from) - Number(right.from)) < 1e-4
+        && Math.abs(Number(left.to) - Number(right.to)) < 1e-4;
+    }
+
+    function cloneLogicalRange(range) {
+      if (!range) return null;
+      return { from: Number(range.from), to: Number(range.to) };
+    }
+
+    function readVisibleRange(chart) {
+      const timeScale = chart.timeScale();
+      if (typeof timeScale.getVisibleLogicalRange !== 'function') return null;
+      return cloneLogicalRange(timeScale.getVisibleLogicalRange());
+    }
+
+    function applyVisibleRange(chart, range) {
+      if (!range) return;
+      const timeScale = chart.timeScale();
+      if (typeof timeScale.setVisibleLogicalRange !== 'function') return;
+      const currentRange = readVisibleRange(chart);
+      if (logicalRangesEqual(currentRange, range)) return;
+      timeScale.setVisibleLogicalRange(range);
+    }
+
+    function syncVisibleRange(sourceChart, targetCharts) {
+      const timeScale = sourceChart.timeScale();
+      if (typeof timeScale.subscribeVisibleLogicalRangeChange !== 'function') return;
+      timeScale.subscribeVisibleLogicalRangeChange((range) => {
+        const normalizedRange = cloneLogicalRange(range);
+        if (syncGuard || !normalizedRange || logicalRangesEqual(sharedLogicalRange, normalizedRange)) return;
+        sharedLogicalRange = normalizedRange;
+        syncGuard = true;
+        for (const chart of targetCharts) {
+          applyVisibleRange(chart, normalizedRange);
+        }
+        syncGuard = false;
+      });
+    }
+
+
+    syncVisibleRange(priceChart, [aoChart, acChart]);
+
+    function renderTradeEventLines(eventLines) {
+      tradeEventLineSeries.forEach((series) => priceChart.removeSeries(series));
+      tradeEventLineSeries = [];
+      (Array.isArray(eventLines) ? eventLines : []).forEach((eventLine) => {
+        const series = priceChart.addLineSeries({
+          color: eventLine.color || '#94a3b8',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          title: eventLine.label || 'Execution',
+        });
+        series.setData(Array.isArray(eventLine.points) ? eventLine.points : []);
+        tradeEventLineSeries.push(series);
+      });
+    }
+
+    function renderTradePathLines(tradePaths) {
+      tradePathLineSeries.forEach((series) => priceChart.removeSeries(series));
+      tradePathLineSeries = [];
+      (Array.isArray(tradePaths) ? tradePaths : []).forEach((tradePath) => {
+        const series = priceChart.addLineSeries({
+          color: tradePath.color || '#94a3b8',
+          lineWidth: 2,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          title: tradePath.label || 'Trade Path',
+        });
+        series.setData(Array.isArray(tradePath.points) ? tradePath.points : []);
+        tradePathLineSeries.push(series);
+      });
+    }
+
+    function getSavedRange() {
+      return readVisibleRange(priceChart);
+    }
+
+    function restoreRange(range) {
+      if (!range) return;
+      sharedLogicalRange = cloneLogicalRange(range);
+      syncGuard = true;
+      applyVisibleRange(priceChart, sharedLogicalRange);
+      applyVisibleRange(aoChart, sharedLogicalRange);
+      applyVisibleRange(acChart, sharedLogicalRange);
+      syncGuard = false;
+    }
+
+    async function getJSON(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+      return text ? JSON.parse(text) : {};
+    }
+
+    async function loadSelectors() {
+      const [markets, frames] = await Promise.all([getJSON('/api/markets'), getJSON('/api/timeframes')]);
+      assetSelect.innerHTML = '';
+      (markets.assets || []).forEach((asset) => {
+        const option = document.createElement('option');
+        option.value = asset;
+        option.textContent = asset;
+        assetSelect.appendChild(option);
+      });
+
+      timeframeSelect.innerHTML = '';
+      (frames.timeframes || []).forEach((tf) => {
+        const option = document.createElement('option');
+        option.value = tf;
+        option.textContent = tf;
+        timeframeSelect.appendChild(option);
+      });
+
+      const savedSymbol = localStorage.getItem('wb_symbol');
+      const savedInterval = localStorage.getItem('wb_interval');
+      if (savedSymbol && (markets.assets || []).includes(savedSymbol)) assetSelect.value = savedSymbol;
+      if (savedInterval && (frames.timeframes || []).includes(savedInterval)) timeframeSelect.value = savedInterval;
+
+      activeSymbol = assetSelect.value || (markets.assets || [])[0] || 'BTC_USDT';
+      activeInterval = timeframeSelect.value || (frames.timeframes || [])[0] || 'Min1';
+    }
+
+    async function syncSelection(force = false) {
+      const url = `/api/select?symbol=${encodeURIComponent(activeSymbol)}&interval=${encodeURIComponent(activeInterval)}`;
+      const payload = await getJSON(url);
+      if (force || lastSelectionGeneration !== payload.selection_generation) {
+        lastSelectionGeneration = payload.selection_generation;
+        lastMarketRevision = null;
+        lastStrategyRevision = null;
+        lastPriceCandles = [];
+        lastJawPoints = [];
+        lastTeethPoints = [];
+        lastLipsPoints = [];
+        lastAOPoints = [];
+        lastACPoints = [];
+      }
+      return payload;
+    }
+
+    function resetIncrementalState() {
+      lastMarketRevision = null;
+      lastStrategyRevision = null;
+      lastPriceCandles = [];
+      lastJawPoints = [];
+      lastTeethPoints = [];
+      lastLipsPoints = [];
+      lastAOPoints = [];
+      lastACPoints = [];
+    }
+
+    function sameTail(prevPoints, nextPoints) {
+      if (!prevPoints.length || !nextPoints.length) return false;
+      return prevPoints.length === nextPoints.length
+        && Number(prevPoints[prevPoints.length - 1].time) === Number(nextPoints[nextPoints.length - 1].time);
+    }
+
+    function incrementalPoint(points) {
+      if (!Array.isArray(points) || !points.length) return null;
+      const point = points[points.length - 1];
+      const time = Number(point?.time);
+      if (!Number.isFinite(time)) return null;
+      return point;
+    }
+
+    function applySeriesData(series, nextPoints, prevPoints, forceReset = false) {
+      if (forceReset || !sameTail(prevPoints, nextPoints)) {
+        series.setData(nextPoints);
+        return nextPoints.map((point) => ({ ...point }));
+      }
+      const point = incrementalPoint(nextPoints);
+      if (point) series.update(point);
+      return nextPoints.map((point) => ({ ...point }));
+    }
+
+    function applyChartPayload(payload, options = {}) {
+      const { refit = false, forceReset = false } = options;
+      const preservedRange = !refit ? getSavedRange() : null;
+      const rows = normalizeCandles(payload.candles);
+      const stepSeconds = inferStepSeconds(rows, intervalSecondsMap[activeInterval] || 60);
+      const maxTime = maxPayloadTime(payload);
+      const priceCandles = padCandles(showZonesEl.checked ? rows : stripCandleOverrides(rows), maxTime, stepSeconds);
+      const jawPoints = showAlligatorEl.checked ? (payload.alligator?.jaw || []) : [];
+      const teethPoints = showAlligatorEl.checked ? (payload.alligator?.teeth || []) : [];
+      const lipsPoints = showAlligatorEl.checked ? (payload.alligator?.lips || []) : [];
+      const aoPoints = showAOEl.checked ? padWhitespaceSeries(payload.ao || [], maxTime, stepSeconds) : [];
+      const acPoints = showACEl.checked ? padWhitespaceSeries(payload.ac || [], maxTime, stepSeconds) : [];
+      const marketRevisionChanged = forceReset || payload.market_revision !== lastMarketRevision;
+      const strategyRevisionChanged = forceReset || payload.strategy_revision !== lastStrategyRevision;
+
+      if (marketRevisionChanged) {
+        lastPriceCandles = applySeriesData(candleSeries, priceCandles, lastPriceCandles, forceReset || !sameTail(lastPriceCandles, priceCandles));
+        lastJawPoints = applySeriesData(jawSeries, jawPoints, lastJawPoints, forceReset);
+        lastTeethPoints = applySeriesData(teethSeries, teethPoints, lastTeethPoints, forceReset);
+        lastLipsPoints = applySeriesData(lipsSeries, lipsPoints, lastLipsPoints, forceReset);
+        lastAOPoints = applySeriesData(aoSeries, aoPoints, lastAOPoints, forceReset);
+        lastACPoints = applySeriesData(acSeries, acPoints, lastACPoints, forceReset);
+        lastMarketRevision = payload.market_revision;
+      }
+
+      if (strategyRevisionChanged) {
+        renderTradeEventLines(payload.trade_event_lines || []);
+        renderTradePathLines(payload.trade_path_lines || []);
+        candleSeries.setMarkers(showWisemanSignalsEl.checked ? filterMarkers(payload.markers || []) : []);
+        lastStrategyRevision = payload.strategy_revision;
+      } else if (forceReset) {
+        candleSeries.setMarkers(showWisemanSignalsEl.checked ? filterMarkers(payload.markers || []) : []);
+      }
+
+      if (rows.length > 0) {
+        if (refit || !hasFittedInitialRange) {
+          priceChart.timeScale().fitContent();
+          const fittedRange = readVisibleRange(priceChart);
+          restoreRange(fittedRange);
+          hasFittedInitialRange = true;
+        } else {
+          restoreRange(preservedRange);
+        }
+        const strategyLabel = payload.strategy_bar_time
+          ? `strategy synced ${new Date(payload.strategy_bar_time * 1000).toLocaleTimeString()}`
+          : 'strategy warming';
+        statusEl.textContent = `${payload.symbol} ${payload.interval} • ${rows.length} candles • chart ${new Date().toLocaleTimeString()} • ${strategyLabel}`;
+      } else {
+        statusEl.textContent = `${payload.symbol} ${payload.interval} • waiting for active-pair candles`;
+      }
+    }
+
+    async function refreshChart(options = {}) {
+      const { refit = false, forceReset = false } = options;
+      try {
+        const payload = await getJSON(`/api/chart-state?symbol=${encodeURIComponent(activeSymbol)}&interval=${encodeURIComponent(activeInterval)}`);
+        if (forceReset || payload.selection_generation !== lastSelectionGeneration) {
+          lastSelectionGeneration = payload.selection_generation;
+          resetIncrementalState();
+        }
+        applyChartPayload(payload, { refit, forceReset });
+      } catch (err) {
+        statusEl.textContent = `Update failed: ${String(err).slice(0, 180)}`;
+      }
+    }
+
+    async function onSelectionChange() {
+      activeSymbol = assetSelect.value;
+      activeInterval = timeframeSelect.value;
+      localStorage.setItem('wb_symbol', activeSymbol);
+      localStorage.setItem('wb_interval', activeInterval);
+      hasFittedInitialRange = false;
+      resetIncrementalState();
+      await syncSelection(true);
+      await refreshChart({ refit: true, forceReset: true });
+    }
+
+    function resizeCharts() {
+      const priceRect = pricePaneEl.getBoundingClientRect();
+      const aoRect = aoPaneEl.getBoundingClientRect();
+      const acRect = acPaneEl.getBoundingClientRect();
+      priceChart.resize(priceRect.width, Math.max(240, priceRect.height));
+      aoChart.resize(aoRect.width || priceRect.width, Math.max(60, aoRect.height || 1));
+      acChart.resize(acRect.width || priceRect.width, Math.max(60, acRect.height || 1));
+    }
+
+    window.addEventListener('resize', resizeCharts);
+
+    showAlligatorEl.addEventListener('change', () => refreshChart({ forceReset: true }));
+    showAOEl.addEventListener('change', () => { applyPaneVisibility(); refreshChart({ forceReset: true }); });
+    showACEl.addEventListener('change', () => { applyPaneVisibility(); refreshChart({ forceReset: true }); });
+    showZonesEl.addEventListener('change', () => refreshChart({ forceReset: true }));
+    showWisemanSignalsEl.addEventListener('change', () => refreshChart({ forceReset: true }));
+    showSecondWisemanEl.addEventListener('change', () => refreshChart({ forceReset: true }));
+    showThirdWisemanEl.addEventListener('change', () => refreshChart({ forceReset: true }));
+
+    async function bootstrap() {
+      try {
+        applyPaneVisibility();
+        resizeCharts();
+        await loadSelectors();
+        await syncSelection(true);
+        await refreshChart({ refit: true, forceReset: true });
+        setInterval(() => refreshChart(), 1000);
+      } catch (err) {
+        statusEl.textContent = `Startup failed: ${String(err).slice(0, 180)}`;
+      }
+    }
+
+    assetSelect.addEventListener('change', onSelectionChange);
+    timeframeSelect.addEventListener('change', onSelectionChange);
+    bootstrap();
+  </script>
+</body>
+</html>

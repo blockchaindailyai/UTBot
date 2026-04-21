@@ -1,0 +1,56 @@
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments and local Python tooling
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+
+# Test and runtime caches
+.pytest_cache/
+
+# IDE/editor noise
+.idea/
+.vscode/
+*.code-workspace
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build / packaging output
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Local logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Generated project artifacts
+artifacts/
+artifacts_*/
+
+# Downloaded or regenerated market-data examples
+examples/BINANCE_*.csv
+examples/INDEX_*.csv
+
+# Local live-data outputs and scratch files
+LiveData/*.json
+LiveData/*.js
+LiveData/*.log

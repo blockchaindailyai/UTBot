@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WilliamsBot Direct KCEX Chart</title>
+  <style>
+    body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #0f172a; color: #e2e8f0; }
+    .topbar { display: flex; gap: 16px; align-items: center; padding: 12px 16px; background: #111827; border-bottom: 1px solid #1f2937; }
+    label { font-size: 13px; color: #93c5fd; }
+    select { background: #1f2937; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; padding: 6px 8px; }
+    #status { margin-left: auto; font-size: 12px; color: #94a3b8; }
+    #chart { height: calc(100vh - 56px); width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <label>Asset
+      <select id="assetSelect"></select>
+    </label>
+    <label>Timeframe
+      <select id="timeframeSelect"></select>
+    </label>
+    <div id="status">Loading...</div>
+  </div>
+  <div id="chart"></div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    const BASE = 'https://www.kcex.com';
+    const COMMON_ASSETS = ['BTC_USDT','ETH_USDT','SOL_USDT','XRP_USDT','DOGE_USDT','BNB_USDT','ADA_USDT','TRX_USDT','AVAX_USDT','LINK_USDT'];
+    const COMMON_TIMEFRAMES = ['Min1','Min3','Min5','Min15','Min30','Min60','Hour4','Hour12','Day1'];
+
+    const statusEl = document.getElementById('status');
+    const assetSelect = document.getElementById('assetSelect');
+    const timeframeSelect = document.getElementById('timeframeSelect');
+
+    const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+      layout: { background: { color: '#0f172a' }, textColor: '#cbd5e1' },
+      grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+      rightPriceScale: { borderColor: '#334155' },
+      timeScale: { borderColor: '#334155', timeVisible: true, secondsVisible: false },
+    });
+    const series = chart.addCandlestickSeries({
+      upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
+      wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+    });
+
+
+    async function fetchJsonSafely(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const raw = await res.text();
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      }
+      if (!raw || !raw.trim()) {
+        throw new Error('Empty response body');
+      }
+      try {
+        return JSON.parse(raw);
+      } catch (_) {
+        const snippet = raw.slice(0, 120).replace(/\s+/g, ' ').trim();
+        throw new Error(`Non-JSON response: ${snippet || '[empty]'}`);
+      }
+    }
+
+    function buildOptions(selectEl, values) {
+      selectEl.innerHTML = '';
+      values.forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        selectEl.appendChild(option);
+      });
+    }
+
+    async function inferTopAssets() {
+      const endpoints = ['/fapi/v1/contract/ticker', '/fapi/v1/contract/symbols', '/fapi/v1/contract/detail'];
+      const ranked = new Map();
+      for (const endpoint of endpoints) {
+        try {
+          const data = await fetchJsonSafely(`${BASE}${endpoint}`);
+          const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+          for (const item of items) {
+            let symbol = String(item.symbol || item.contractCode || item.pair || '').toUpperCase().trim();
+            if (!symbol || !symbol.includes('USDT')) continue;
+            if (!symbol.includes('_') && symbol.endsWith('USDT')) symbol = symbol.replace('USDT', '_USDT');
+            const score = Number(item.amount24 || item.quoteVolume || item.turnover24h || item.volValue24 || item.volume || item.vol || 0);
+            if (!ranked.has(symbol) || score > ranked.get(symbol)) ranked.set(symbol, score);
+          }
+        } catch (_) {}
+      }
+      const top = [...ranked.entries()].sort((a,b) => b[1]-a[1]).slice(0,10).map(([symbol]) => symbol);
+      return top.length ? top : COMMON_ASSETS;
+    }
+
+    async function inferTimeframes() {
+      const now = Math.floor(Date.now()/1000);
+      const valid = [];
+      for (const interval of COMMON_TIMEFRAMES) {
+        try {
+          const data = await fetchJsonSafely(`${BASE}/fapi/v1/contract/kline/BTC_USDT?interval=${interval}&start=${now-7200}&end=${now}`);
+          if (Array.isArray(data?.data) && data.data.length > 0) valid.push(interval);
+        } catch (_) {}
+      }
+      return valid.length ? valid : COMMON_TIMEFRAMES;
+    }
+
+    function mapCandles(payload) {
+      const rows = [];
+      const blocks = Array.isArray(payload?.data) ? payload.data : [];
+      for (const block of blocks) {
+        const times = block.time || [];
+        const opens = block.open || [];
+        const highs = block.high || [];
+        const lows = block.low || [];
+        const closes = block.close || [];
+        const len = Math.min(times.length, opens.length, highs.length, lows.length, closes.length);
+        for (let i=0;i<len;i++) {
+          rows.push({ time: Number(times[i]), open: Number(opens[i]), high: Number(highs[i]), low: Number(lows[i]), close: Number(closes[i]) });
+        }
+      }
+      rows.sort((a,b)=>a.time-b.time);
+      return rows;
+    }
+
+    async function refreshChart() {
+      const symbol = assetSelect.value;
+      const interval = timeframeSelect.value;
+      const now = Math.floor(Date.now()/1000);
+      const start = now - 3600*400;
+      try {
+        const payload = await fetchJsonSafely(`${BASE}/fapi/v1/contract/kline/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(interval)}&start=${start}&end=${now}`);
+        const candles = mapCandles(payload);
+        series.setData(candles);
+        chart.timeScale().fitContent();
+        statusEl.textContent = `${symbol} ${interval} • ${candles.length} candles • ${new Date().toLocaleTimeString()}`;
+      } catch (err) {
+        statusEl.textContent = `Direct KCEX fetch failed: ${String(err).slice(0, 160)}. If this persists, use local API mode.`;
+      }
+    }
+
+    window.addEventListener('resize', () => chart.resize(window.innerWidth, window.innerHeight - 56));
+
+    (async () => {
+      const [assets, tfs] = await Promise.all([inferTopAssets(), inferTimeframes()]);
+      buildOptions(assetSelect, assets);
+      buildOptions(timeframeSelect, tfs);
+      assetSelect.addEventListener('change', refreshChart);
+      timeframeSelect.addEventListener('change', refreshChart);
+      await refreshChart();
+      setInterval(refreshChart, 3000);
+    })();
+  </script>
+</body>
+</html>
