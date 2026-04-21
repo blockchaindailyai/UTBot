@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+import numpy as np
 import pandas as pd
 
 from .resample import normalize_timeframe
@@ -24,6 +25,8 @@ class BacktestConfig:
     volatility_max_scale: float = 3.0
     execute_on_signal_bar: bool = False
     signal_timeframe: str | None = None
+    max_intrabar_evaluations_per_signal_bar: int = 24
+    signal_timeframe_history_bars: int | None = None
 
 
 @dataclass(slots=True)
@@ -76,6 +79,13 @@ class BacktestEngine:
             raise ValueError("volatility scale bounds must be positive")
         if self.config.volatility_min_scale > self.config.volatility_max_scale:
             raise ValueError("volatility_min_scale must be <= volatility_max_scale")
+        if self.config.max_intrabar_evaluations_per_signal_bar <= 0:
+            raise ValueError("max_intrabar_evaluations_per_signal_bar must be positive")
+        if (
+            self.config.signal_timeframe_history_bars is not None
+            and self.config.signal_timeframe_history_bars <= 0
+        ):
+            raise ValueError("signal_timeframe_history_bars must be positive when provided")
 
         signals = self._generate_signals(data=data, strategy=strategy)
         close = data["close"].astype("float64")
@@ -211,6 +221,7 @@ class BacktestEngine:
             if bucket.empty:
                 continue
 
+            bucket_signals = pd.Series(index=bucket.index, dtype="float64")
             bucket_open = float(bucket["open"].iloc[0])
             bucket_high = bucket["high"].astype("float64").cummax()
             bucket_low = bucket["low"].astype("float64").cummin()
@@ -220,8 +231,26 @@ class BacktestEngine:
                 if aggregation_has_volume
                 else pd.Series(0.0, index=bucket.index, dtype="float64")
             )
+            if len(bucket.index) <= self.config.max_intrabar_evaluations_per_signal_bar:
+                eval_indices = list(range(len(bucket.index)))
+            else:
+                eval_count = self.config.max_intrabar_evaluations_per_signal_bar
+                eval_indices = sorted(
+                    set(
+                        [
+                            int(round(v))
+                            for v in np.linspace(0, len(bucket.index) - 1, num=eval_count)
+                        ]
+                    )
+                )
+                if 0 not in eval_indices:
+                    eval_indices.insert(0, 0)
+                last_idx = len(bucket.index) - 1
+                if last_idx not in eval_indices:
+                    eval_indices.append(last_idx)
 
-            for ts in bucket.index:
+            for i in eval_indices:
+                ts = bucket.index[i]
                 partial_bar = {
                     "open": bucket_open,
                     "high": float(bucket_high.loc[ts]),
@@ -233,8 +262,13 @@ class BacktestEngine:
 
                 partial_df = pd.DataFrame([partial_bar], index=pd.DatetimeIndex([bucket_start]))
                 snapshot_agg = pd.concat([closed_bars, partial_df]) if len(closed_bars) else partial_df
-                aggregated_signal = strategy.generate_signals(snapshot_agg).iloc[-1]
-                signals.loc[ts] = int(aggregated_signal) if pd.notna(aggregated_signal) else 0
+                history_bars = self.config.signal_timeframe_history_bars
+                strategy_input = snapshot_agg.tail(history_bars) if history_bars is not None else snapshot_agg
+                aggregated_signal = strategy.generate_signals(strategy_input).iloc[-1]
+                bucket_signals.loc[ts] = int(aggregated_signal) if pd.notna(aggregated_signal) else 0
+
+            bucket_signals = bucket_signals.ffill().bfill().fillna(0.0)
+            signals.loc[bucket.index] = bucket_signals.astype("int8")
 
             final_bar = {
                 "open": bucket_open,
