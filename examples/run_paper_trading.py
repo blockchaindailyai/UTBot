@@ -1237,10 +1237,26 @@ def _build_dashboard_html(data_script_filename: str) -> str:
     }};
     syncVisibleRange(priceChart, [aoChart, acChart]);
 
-    const renderPaperTradeEventLines = (eventLines) => {{
+    const renderPaperTradeEventLines = (eventLines, candleRows) => {{
       paperTradeEventLineSeries.forEach((series) => priceChart.removeSeries(series));
       paperTradeEventLineSeries = [];
+      const candles = Array.isArray(candleRows) ? candleRows : [];
+      const candleIndexByTime = new Map(candles.map((candle, idx) => [String(candle.time), idx]));
       (eventLines || []).forEach((eventLine) => {{
+        const points = Array.isArray(eventLine.points) ? eventLine.points : [];
+        const anchorPoint = points[0] || null;
+        const anchorPrice = Number(anchorPoint?.value);
+        const anchorTime = anchorPoint?.time;
+        const anchorIndex = anchorTime == null ? -1 : Number(candleIndexByTime.get(String(anchorTime)));
+        let linePoints = points;
+        if (Number.isFinite(anchorPrice) && Number.isFinite(anchorIndex) && candles.length > 0) {{
+          const leftIndex = Math.max(0, anchorIndex - 1);
+          const rightIndex = Math.min(candles.length - 1, anchorIndex + 1);
+          linePoints = [
+            {{ time: candles[leftIndex].time, value: anchorPrice }},
+            {{ time: candles[rightIndex].time, value: anchorPrice }},
+          ];
+        }}
         const series = priceChart.addLineSeries({{
           color: eventLine.color || '#94a3b8',
           lineWidth: 2,
@@ -1250,7 +1266,7 @@ def _build_dashboard_html(data_script_filename: str) -> str:
           crosshairMarkerVisible: false,
           title: eventLine.label || 'Execution',
         }});
-        series.setData(eventLine.points || []);
+        series.setData(linePoints);
         paperTradeEventLineSeries.push(series);
       }});
     }};
@@ -1326,7 +1342,7 @@ def _build_dashboard_html(data_script_filename: str) -> str:
       aoSeries.setData(showAOEl.checked ? (priceChartPayload.ao || []) : []);
       acSeries.setData(showACEl.checked ? (priceChartPayload.ac || []) : []);
       priceCandleSeries.setMarkers(collapseMarkers(filterMarkers(priceChartPayload.markers || [])));
-      renderPaperTradeEventLines(priceChartPayload.trade_event_lines || []);
+      renderPaperTradeEventLines(priceChartPayload.trade_event_lines || [], candleRows);
       renderPaperTradePathLines(priceChartPayload.trade_path_lines || []);
       if (candleRows.length > 0) {{
         if (!chartRangeInitialized) {{
