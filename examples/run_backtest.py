@@ -48,6 +48,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--volatility-max-scale", type=float, default=3.0)
     parser.add_argument("--start", type=str, default=None)
     parser.add_argument("--end", type=str, default=None)
+    parser.add_argument(
+        "--signal-timeframe",
+        type=str,
+        default=None,
+        help=(
+            "Optional higher timeframe for signal generation (for example 1D). "
+            "When set, signals are recalculated on progressively formed higher-timeframe bars "
+            "while execution still happens on the source bars."
+        ),
+    )
+    parser.add_argument(
+        "--max-intrabar-evaluations-per-signal-bar",
+        type=int,
+        default=24,
+        help=(
+            "Max number of intrabar signal evaluations within each signal-timeframe bar. "
+            "Lower values are faster on dense source data (like 5m) and signals are "
+            "forward-filled between evaluation points."
+        ),
+    )
+    parser.add_argument(
+        "--signal-timeframe-history-bars",
+        type=int,
+        default=None,
+        help=(
+            "Optional cap for how many higher-timeframe bars are passed to strategy "
+            "during each intrabar re-evaluation. Lower values are faster but may "
+            "change indicator behavior."
+        ),
+    )
     return parser
 
 
@@ -81,6 +111,9 @@ def main() -> None:
             volatility_min_scale=args.volatility_min_scale,
             volatility_max_scale=args.volatility_max_scale,
             execute_on_signal_bar=strategy_name in {"ut_bot", "utbot"},
+            signal_timeframe=args.signal_timeframe,
+            max_intrabar_evaluations_per_signal_bar=args.max_intrabar_evaluations_per_signal_bar,
+            signal_timeframe_history_bars=args.signal_timeframe_history_bars,
         )
     )
     result = engine.run(data, strategy)

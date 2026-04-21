@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+
 import pandas as pd
 
 from backtesting.engine import BacktestResult
@@ -60,3 +63,34 @@ def test_local_chart_includes_ut_bot_overlay(tmp_path) -> None:
     assert "createSeriesMarkers" in html
     assert "LineStyle.Dashed" in html
     assert "trailing_stop" in html
+
+
+def test_local_chart_uses_unique_intraday_timestamps_for_candles(tmp_path) -> None:
+    idx = pd.date_range("2024-01-01", periods=12, freq="2h", tz="UTC")
+    close = pd.Series(range(len(idx)), index=idx, dtype="float64") + 100.0
+    data = pd.DataFrame(
+        {
+            "open": close - 0.25,
+            "high": close + 0.5,
+            "low": close - 0.5,
+            "close": close,
+        },
+        index=idx,
+    )
+    result = BacktestResult(
+        equity_curve=close.copy(),
+        returns=close.pct_change().fillna(0.0),
+        positions=pd.Series(0, index=idx, dtype="int8"),
+        trades=[],
+        stats={},
+    )
+    out = tmp_path / "chart_intraday.html"
+    generate_local_tradingview_chart(data, result, out)
+
+    html = out.read_text(encoding="utf-8")
+    match = re.search(r"const payload = (\{.*?\});\nconst statusEl", html, re.DOTALL)
+    assert match is not None
+    payload = json.loads(match.group(1))
+    candle_times = [item["time"] for item in payload["candles"]]
+    assert len(candle_times) == len(idx)
+    assert len(set(candle_times)) == len(idx)
