@@ -6,7 +6,7 @@ from .report import (
     generate_backtest_pdf_report,
     write_backtest_json_summary,
 )
-from .strategy import BuyAndHoldStrategy, MovingAverageCrossStrategy, Strategy
+from .strategy import BuyAndHoldStrategy, MovingAverageCrossStrategy, Strategy, UTBotStrategy
 
 __all__ = [
     "BacktestConfig",
@@ -16,6 +16,7 @@ __all__ = [
     "Strategy",
     "BuyAndHoldStrategy",
     "MovingAverageCrossStrategy",
+    "UTBotStrategy",
     "load_ohlcv_csv",
     "filter_ohlcv_by_date",
     "generate_backtest_pdf_report",
