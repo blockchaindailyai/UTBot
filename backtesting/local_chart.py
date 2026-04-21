@@ -78,6 +78,35 @@ def _ut_bot_payload(
     }
 
 
+def _trade_markers_payload(result: BacktestResult) -> list[dict[str, str]]:
+    markers: list[dict[str, str]] = []
+    for trade in result.trades:
+        side = str(trade.side).lower()
+        is_long = side == "long"
+        entry_time = str(pd.Timestamp(trade.entry_time).date())
+        exit_time = str(pd.Timestamp(trade.exit_time).date())
+        markers.append(
+            {
+                "time": entry_time,
+                "position": "belowBar" if is_long else "aboveBar",
+                "color": "#16a34a" if is_long else "#dc2626",
+                "shape": "arrowUp" if is_long else "arrowDown",
+                "text": "LE" if is_long else "SE",
+            }
+        )
+        markers.append(
+            {
+                "time": exit_time,
+                "position": "aboveBar" if is_long else "belowBar",
+                "color": "#22c55e" if is_long else "#ef4444",
+                "shape": "arrowDown" if is_long else "arrowUp",
+                "text": "LX" if is_long else "SX",
+            }
+        )
+    markers.sort(key=lambda marker: marker["time"])
+    return markers
+
+
 def generate_local_tradingview_chart(
     data: pd.DataFrame,
     result: BacktestResult,
@@ -99,6 +128,7 @@ def generate_local_tradingview_chart(
         "price": _to_points(data["close"].astype("float64")),
         "equity": _to_points(result.equity_curve.astype("float64")),
         "position": _to_points(result.positions.astype("float64")),
+        "tradeMarkers": _trade_markers_payload(result),
     }
     payload["utBot"] = _ut_bot_payload(data)
 
@@ -147,14 +177,19 @@ if (!window.LightweightCharts) {{
 
   const candleSeries = chart.addCandlestickSeries();
   candleSeries.setData(payload.candles);
-  candleSeries.setMarkers(payload.utBot.markers);
+  const allMarkers = [...payload.utBot.markers, ...payload.tradeMarkers];
+  if (typeof candleSeries.setMarkers === 'function') {{
+    candleSeries.setMarkers(allMarkers);
+  }} else if (typeof LightweightCharts.createSeriesMarkers === 'function') {{
+    LightweightCharts.createSeriesMarkers(candleSeries, allMarkers);
+  }}
 
   const equitySeries = chart.addLineSeries({{ color: '#22c55e', lineWidth: 2 }});
   equitySeries.setData(payload.equity.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
   const utStopSeries = chart.addLineSeries({{ color: '#f59e0b', lineWidth: 2 }});
   utStopSeries.setData(payload.utBot.trailing_stop.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
 
-  statusEl.textContent = 'Candles + equity + UT Bot trailing stop/signals rendered with Lightweight Charts.';
+  statusEl.textContent = 'Candles + equity + UT Bot signals + trade execution markers rendered with Lightweight Charts.';
   window.addEventListener('resize', () => {{
     chart.applyOptions({{ width: chartEl.clientWidth }});
   }});
