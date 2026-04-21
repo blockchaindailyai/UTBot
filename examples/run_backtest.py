@@ -14,7 +14,6 @@ from backtesting import (
     generate_local_tradingview_chart,
     load_ohlcv_csv,
 )
-from backtesting.tradingview import generate_ut_bot_strategy_pinescript
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,10 +47,6 @@ def main() -> None:
     result.trades_dataframe().to_csv(out_dir / "trades.csv", index=False)
     generate_local_tradingview_chart(data=data, result=result, output_path=out_dir / "chart.html")
     generate_backtest_pdf_report(result=result, output_path=out_dir / "report.pdf")
-    ut_bot_strategy_path = out_dir / "ut_bot_strategy.pine"
-    generate_ut_bot_strategy_pinescript(output_path=str(ut_bot_strategy_path))
-    print(f"TradingView UT Bot strategy script written to: {ut_bot_strategy_path}")
-    print("Open the .pine file, copy its contents, and paste into TradingView Pine Editor, then click Add to chart.")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,5 @@ python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy m
 
 - `stats.json`
 - `trades.csv`
-- `chart.html` (includes UT Bot trailing stop + Buy/Sell signal markers)
+- `chart.html`
 - `report.pdf`
-- `ut_bot_strategy.pine` (paste into TradingView Pine Editor, then click **Add to chart**)
