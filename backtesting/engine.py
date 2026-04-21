@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+import numpy as np
 import pandas as pd
 
+from .resample import normalize_timeframe
 from .stats import compute_performance_stats
 from .strategy import Strategy
 
@@ -22,6 +24,9 @@ class BacktestConfig:
     volatility_min_scale: float = 0.25
     volatility_max_scale: float = 3.0
     execute_on_signal_bar: bool = False
+    signal_timeframe: str | None = None
+    max_intrabar_evaluations_per_signal_bar: int = 24
+    signal_timeframe_history_bars: int | None = None
 
 
 @dataclass(slots=True)
@@ -74,8 +79,15 @@ class BacktestEngine:
             raise ValueError("volatility scale bounds must be positive")
         if self.config.volatility_min_scale > self.config.volatility_max_scale:
             raise ValueError("volatility_min_scale must be <= volatility_max_scale")
+        if self.config.max_intrabar_evaluations_per_signal_bar <= 0:
+            raise ValueError("max_intrabar_evaluations_per_signal_bar must be positive")
+        if (
+            self.config.signal_timeframe_history_bars is not None
+            and self.config.signal_timeframe_history_bars <= 0
+        ):
+            raise ValueError("signal_timeframe_history_bars must be positive when provided")
 
-        signals = strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
+        signals, signal_fill_prices = self._generate_signals(data=data, strategy=strategy)
         close = data["close"].astype("float64")
         close_returns = close.pct_change().fillna(0.0)
 
@@ -91,7 +103,8 @@ class BacktestEngine:
 
         for i in range(1, len(data)):
             signal_now = int(signals.iloc[i])
-            price = float(close.iloc[i])
+            signal_fill_price_now = float(signal_fill_prices.iloc[i]) if pd.notna(signal_fill_prices.iloc[i]) else float("nan")
+            price = signal_fill_price_now if pd.notna(signal_fill_price_now) else float(close.iloc[i])
             ts = data.index[i]
             desired_signal = signal_now if self.config.execute_on_signal_bar else int(signals.iloc[i - 1])
             current_signal = 0 if units == 0 else (1 if units > 0 else -1)
@@ -179,6 +192,118 @@ class BacktestEngine:
             positions=positions_series,
             trades=trades,
             stats=stats,
+        )
+
+    def _generate_signals(self, data: pd.DataFrame, strategy: Strategy) -> tuple[pd.Series, pd.Series]:
+        signal_timeframe = self.config.signal_timeframe
+        if signal_timeframe is None or signal_timeframe.strip() == "":
+            signals = strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
+            fill_prices = getattr(strategy, "signal_fill_prices", None)
+            if isinstance(fill_prices, pd.Series):
+                fills = fill_prices.reindex(data.index).astype("float64")
+            else:
+                fills = pd.Series(float("nan"), index=data.index, dtype="float64")
+            return signals, fills
+
+        if not isinstance(data.index, pd.DatetimeIndex):
+            raise ValueError("signal_timeframe requires a DatetimeIndex")
+
+        if not data.index.is_monotonic_increasing:
+            raise ValueError("Data index must be sorted ascending for signal_timeframe simulation")
+
+        rule = normalize_timeframe(signal_timeframe)
+        source_freq = data.index.to_series().diff().dropna().median()
+        try:
+            target_freq = pd.to_timedelta(rule)
+        except (ValueError, TypeError):
+            target_freq = None
+        if pd.notna(source_freq) and target_freq is not None and target_freq <= source_freq:
+            signals = strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
+            fill_prices = getattr(strategy, "signal_fill_prices", None)
+            if isinstance(fill_prices, pd.Series):
+                fills = fill_prices.reindex(data.index).astype("float64")
+            else:
+                fills = pd.Series(float("nan"), index=data.index, dtype="float64")
+            return signals, fills
+
+        signals = pd.Series(index=data.index, dtype="int8")
+        fill_prices = pd.Series(float("nan"), index=data.index, dtype="float64")
+        closed_bars = pd.DataFrame(columns=data.columns)
+        aggregation_has_volume = "volume" in data.columns
+
+        for bucket_start, bucket in data.groupby(pd.Grouper(freq=rule), sort=True):
+            if bucket.empty:
+                continue
+
+            bucket_signals = pd.Series(index=bucket.index, dtype="float64")
+            bucket_fill_prices = pd.Series(float("nan"), index=bucket.index, dtype="float64")
+            bucket_open = float(bucket["open"].iloc[0])
+            bucket_high = bucket["high"].astype("float64").cummax()
+            bucket_low = bucket["low"].astype("float64").cummin()
+            bucket_close = bucket["close"].astype("float64")
+            bucket_volume = (
+                bucket["volume"].astype("float64").cumsum()
+                if aggregation_has_volume
+                else pd.Series(0.0, index=bucket.index, dtype="float64")
+            )
+            if len(bucket.index) <= self.config.max_intrabar_evaluations_per_signal_bar:
+                eval_indices = list(range(len(bucket.index)))
+            else:
+                eval_count = self.config.max_intrabar_evaluations_per_signal_bar
+                eval_indices = sorted(
+                    set(
+                        [
+                            int(round(v))
+                            for v in np.linspace(0, len(bucket.index) - 1, num=eval_count)
+                        ]
+                    )
+                )
+                if 0 not in eval_indices:
+                    eval_indices.insert(0, 0)
+                last_idx = len(bucket.index) - 1
+                if last_idx not in eval_indices:
+                    eval_indices.append(last_idx)
+
+            for i in eval_indices:
+                ts = bucket.index[i]
+                partial_bar = {
+                    "open": bucket_open,
+                    "high": float(bucket_high.loc[ts]),
+                    "low": float(bucket_low.loc[ts]),
+                    "close": float(bucket_close.loc[ts]),
+                }
+                if aggregation_has_volume:
+                    partial_bar["volume"] = float(bucket_volume.loc[ts])
+
+                partial_df = pd.DataFrame([partial_bar], index=pd.DatetimeIndex([bucket_start]))
+                snapshot_agg = pd.concat([closed_bars, partial_df]) if len(closed_bars) else partial_df
+                history_bars = self.config.signal_timeframe_history_bars
+                strategy_input = snapshot_agg.tail(history_bars) if history_bars is not None else snapshot_agg
+                aggregated_signal = strategy.generate_signals(strategy_input).iloc[-1]
+                bucket_signals.loc[ts] = int(aggregated_signal) if pd.notna(aggregated_signal) else 0
+                intrabar_fill_series = getattr(strategy, "signal_fill_prices", None)
+                if isinstance(intrabar_fill_series, pd.Series) and len(intrabar_fill_series):
+                    maybe_fill = intrabar_fill_series.iloc[-1]
+                    if pd.notna(maybe_fill):
+                        bucket_fill_prices.loc[ts] = float(maybe_fill)
+
+            bucket_signals = bucket_signals.ffill().bfill().fillna(0.0)
+            signals.loc[bucket.index] = bucket_signals.astype("int8")
+            fill_prices.loc[bucket.index] = bucket_fill_prices
+
+            final_bar = {
+                "open": bucket_open,
+                "high": float(bucket_high.iloc[-1]),
+                "low": float(bucket_low.iloc[-1]),
+                "close": float(bucket_close.iloc[-1]),
+            }
+            if aggregation_has_volume:
+                final_bar["volume"] = float(bucket_volume.iloc[-1])
+            closed_bars.loc[bucket_start, list(final_bar.keys())] = list(final_bar.values())
+
+        return (
+            signals.reindex(data.index).fillna(0).astype("int8"),
+            fill_prices.reindex(data.index).astype("float64"),
         )
 
     def _compute_position_notional(self, capital: float, close_returns: pd.Series, bar_index: int) -> float:
