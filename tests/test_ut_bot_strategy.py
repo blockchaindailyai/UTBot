@@ -4,6 +4,7 @@ import pandas as pd
 
 from backtesting.engine import BacktestConfig, BacktestEngine
 from backtesting.strategy import UTBotStrategy
+from examples import run_backtest
 
 
 def test_ut_bot_strategy_generates_directional_signals() -> None:
@@ -58,3 +59,9 @@ def test_engine_accepts_size_and_contracts_for_ut_bot() -> None:
 
     result = engine.run(data, strategy)
     assert len(result.positions) == len(data)
+
+
+def test_run_backtest_parser_accepts_ut_bot_aliases() -> None:
+    parser = run_backtest.build_parser()
+    args = parser.parse_args(["--csv", "examples/sample_ohlcv.csv", "--strategy", "ut-bot"])
+    assert args.strategy == "ut-bot"
