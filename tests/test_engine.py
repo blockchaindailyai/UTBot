@@ -23,6 +23,7 @@ from backtesting.report import generate_backtest_clean_pdf_report, generate_back
 from backtesting.tradingview import (
     generate_first_wiseman_bearish_pinescript,
     generate_first_wiseman_bullish_pinescript,
+    generate_ut_bot_strategy_pinescript,
 )
 from backtesting.resample import infer_source_timeframe_label, resample_ohlcv
 from backtesting.stats import infer_periods_per_year
@@ -4724,6 +4725,18 @@ def test_wiseman_summary_counts_match_chart_markers() -> None:
     assert summary["bullish_first_wiseman"] >= 0
     assert summary["bullish_reverse"] >= 0
     assert summary["bearish_first_wiseman"] + summary["bullish_first_wiseman"] >= 1
+
+
+def test_ut_bot_strategy_pinescript_generation(tmp_path) -> None:
+    out = tmp_path / "ut_bot_strategy.pine"
+    path = generate_ut_bot_strategy_pinescript(str(out))
+
+    pine = out.read_text(encoding="utf-8")
+    assert path.endswith("ut_bot_strategy.pine")
+    assert "strategy(\"UT Bot Alerts Strategy\"" in pine
+    assert "ta.atr(c)" in pine
+    assert "strategy.entry(\"Long\", strategy.long)" in pine
+    assert "strategy.entry(\"Short\", strategy.short)" in pine
 
 
 def test_pdf_report_generation(tmp_path) -> None:
