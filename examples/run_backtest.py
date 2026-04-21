@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from backtesting import (
     BacktestConfig,
     BacktestEngine,
@@ -15,6 +17,7 @@ from backtesting import (
     generate_local_tradingview_chart,
     load_ohlcv_csv,
 )
+from backtesting.resample import normalize_timeframe, resample_ohlcv
 from backtesting.tradingview import generate_ut_bot_strategy_pinescript
 
 
@@ -121,7 +124,18 @@ def main() -> None:
 
     (out_dir / "stats.json").write_text(json.dumps(result.stats, indent=2), encoding="utf-8")
     result.trades_dataframe().to_csv(out_dir / "trades.csv", index=False)
-    generate_local_tradingview_chart(data=data, result=result, output_path=out_dir / "chart.html")
+    chart_data = data
+    if args.signal_timeframe:
+        normalized_signal_timeframe = normalize_timeframe(args.signal_timeframe)
+        source_freq = data.index.to_series().diff().dropna().median()
+        try:
+            target_freq = pd.to_timedelta(normalized_signal_timeframe)
+        except (TypeError, ValueError):
+            target_freq = None
+        if target_freq is not None and pd.notna(source_freq) and target_freq > source_freq:
+            chart_data = resample_ohlcv(data, args.signal_timeframe)
+
+    generate_local_tradingview_chart(data=chart_data, result=result, output_path=out_dir / "chart.html")
     generate_backtest_pdf_report(result=result, output_path=out_dir / "report.pdf")
     ut_bot_strategy_path = out_dir / "ut_bot_strategy.pine"
     generate_ut_bot_strategy_pinescript(output_path=str(ut_bot_strategy_path))

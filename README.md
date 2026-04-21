@@ -40,6 +40,7 @@ python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy u
 ```
 
 UT Bot entries/exits now use intrabar trigger fill prices (stop-cross price) when available, instead of always filling at bar close.
+When `--signal-timeframe` is set to a higher interval (for example `1D`), `chart.html` is rendered from that higher-timeframe OHLCV instead of the lower source bars.
 
 Available sizing modes:
 - `static_usd`: fixed USD notional per trade (`--size-value` is USD amount).
