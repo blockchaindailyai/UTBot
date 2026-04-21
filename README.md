@@ -15,11 +15,16 @@ pip install -e .
 python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ma_cross --fast 20 --slow 50 --out .\artifacts
 ```
 
-UT Bot strategy example with sizing controls:
+UT Bot strategy example with position sizing controls:
 
 ```powershell
-python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --ut-key-value 1 --ut-atr-period 10 --size 0.5 --contracts 2 --out .\artifacts_ut
+python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --ut-key-value 1 --ut-atr-period 10 --size-mode equity_percent --size-value 0.5 --out .\artifacts_ut
 ```
+
+Available sizing modes:
+- `static_usd`: fixed USD notional per trade (`--size-value` is USD amount).
+- `equity_percent`: scales trade notional with account equity (`--size-value` is a decimal fraction, e.g. `0.5` = 50%).
+- `volatility_scaled`: starts from equity % sizing and rescales using realized annualized volatility toward `--volatility-target-annual`.
 
 ## Outputs
 
