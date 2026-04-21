@@ -21,3 +21,4 @@ python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy m
 - `trades.csv`
 - `chart.html`
 - `report.pdf`
+- `ut_bot_strategy.pine` (paste into TradingView Pine Editor, then click **Add to chart**)
