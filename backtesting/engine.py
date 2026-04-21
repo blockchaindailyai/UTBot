@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 
 import pandas as pd
 
+from .resample import normalize_timeframe
 from .stats import compute_performance_stats
 from .strategy import Strategy
 
@@ -22,6 +23,7 @@ class BacktestConfig:
     volatility_min_scale: float = 0.25
     volatility_max_scale: float = 3.0
     execute_on_signal_bar: bool = False
+    signal_timeframe: str | None = None
 
 
 @dataclass(slots=True)
@@ -75,7 +77,7 @@ class BacktestEngine:
         if self.config.volatility_min_scale > self.config.volatility_max_scale:
             raise ValueError("volatility_min_scale must be <= volatility_max_scale")
 
-        signals = strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
+        signals = self._generate_signals(data=data, strategy=strategy)
         close = data["close"].astype("float64")
         close_returns = close.pct_change().fillna(0.0)
 
@@ -180,6 +182,39 @@ class BacktestEngine:
             trades=trades,
             stats=stats,
         )
+
+    def _generate_signals(self, data: pd.DataFrame, strategy: Strategy) -> pd.Series:
+        signal_timeframe = self.config.signal_timeframe
+        if signal_timeframe is None or signal_timeframe.strip() == "":
+            return strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
+
+        if not isinstance(data.index, pd.DatetimeIndex):
+            raise ValueError("signal_timeframe requires a DatetimeIndex")
+
+        if not data.index.is_monotonic_increasing:
+            raise ValueError("Data index must be sorted ascending for signal_timeframe simulation")
+
+        rule = normalize_timeframe(signal_timeframe)
+        signals = pd.Series(index=data.index, dtype="int8")
+        for i in range(len(data)):
+            snapshot = data.iloc[: i + 1]
+            snapshot_agg = snapshot.resample(rule).agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+            )
+            snapshot_agg = snapshot_agg.dropna(subset=["open", "high", "low", "close"])
+            if snapshot_agg.empty:
+                signals.iloc[i] = 0
+                continue
+            aggregated_signal = strategy.generate_signals(snapshot_agg).iloc[-1]
+            signals.iloc[i] = int(aggregated_signal) if pd.notna(aggregated_signal) else 0
+
+        return signals.fillna(0).astype("int8")
 
     def _compute_position_notional(self, capital: float, close_returns: pd.Series, bar_index: int) -> float:
         mode = self.config.position_size_mode.strip().lower()
