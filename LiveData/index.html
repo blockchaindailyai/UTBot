@@ -602,20 +602,47 @@
 
     syncVisibleRange(priceChart, [aoChart, acChart]);
 
-    function renderTradeEventLines(eventLines) {
+    function timeKey(value) {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) return String(numeric);
+      const parsed = Date.parse(String(value));
+      if (Number.isFinite(parsed)) return String(Math.floor(parsed / 1000));
+      return String(value);
+    }
+
+    function renderTradeEventLines(eventLines, candleRows) {
       tradeEventLineSeries.forEach((series) => priceChart.removeSeries(series));
       tradeEventLineSeries = [];
+      const candles = Array.isArray(candleRows) ? candleRows : [];
+      const candleIndexByTime = new Map(candles.map((candle, idx) => [timeKey(candle.time), idx]));
       (Array.isArray(eventLines) ? eventLines : []).forEach((eventLine) => {
+        const points = Array.isArray(eventLine.points) ? eventLine.points : [];
+        const anchorPoint = points.find((point) => Number.isFinite(Number(point?.value))) || points[0] || null;
+        const anchorPrice = Number(anchorPoint?.value ?? eventLine?.price ?? eventLine?.value);
+        const anchorIndex = Number(candleIndexByTime.get(timeKey(anchorPoint?.time ?? eventLine?.time)));
+        let linePoints = points;
+        if (Number.isFinite(anchorPrice) && Number.isFinite(anchorIndex) && candles.length > 0) {
+          const leftIndex = Math.max(0, anchorIndex - 1);
+          const rightIndex = Math.min(candles.length - 1, anchorIndex + 1);
+          if (leftIndex !== rightIndex) {
+            linePoints = [
+              { time: candles[leftIndex].time, value: anchorPrice },
+              { time: candles[rightIndex].time, value: anchorPrice },
+            ];
+          }
+        }
         const series = priceChart.addLineSeries({
           color: eventLine.color || '#94a3b8',
-          lineWidth: 2,
+          lineWidth: 3,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           lastValueVisible: false,
           priceLineVisible: false,
           crosshairMarkerVisible: false,
           title: eventLine.label || 'Execution',
         });
-        series.setData(Array.isArray(eventLine.points) ? eventLine.points : []);
+        series.setData(linePoints);
         tradeEventLineSeries.push(series);
       });
     }
@@ -763,7 +790,7 @@
       }
 
       if (strategyRevisionChanged) {
-        renderTradeEventLines(payload.trade_event_lines || []);
+        renderTradeEventLines(payload.trade_event_lines || [], rows);
         renderTradePathLines(payload.trade_path_lines || []);
         candleSeries.setMarkers(showWisemanSignalsEl.checked ? filterMarkers(payload.markers || []) : []);
         lastStrategyRevision = payload.strategy_revision;
