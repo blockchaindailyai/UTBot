@@ -39,6 +39,8 @@ You can also cap higher-timeframe history used in each intrabar re-evaluation:
 python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --max-intrabar-evaluations-per-signal-bar 24 --signal-timeframe-history-bars 20 --out .\artifacts_intrabar_faster
 ```
 
+UT Bot entries/exits now use intrabar trigger fill prices (stop-cross price) when available, instead of always filling at bar close.
+
 Available sizing modes:
 - `static_usd`: fixed USD notional per trade (`--size-value` is USD amount).
 - `equity_percent`: scales trade notional with account equity (`--size-value` is a decimal fraction, e.g. `0.5` = 50%).
