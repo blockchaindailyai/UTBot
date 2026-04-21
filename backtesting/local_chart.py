@@ -71,6 +71,47 @@ def _trade_markers_payload(result: BacktestResult) -> list[dict[str, str]]:
     return markers
 
 
+def _trade_event_lines_payload(data: pd.DataFrame, result: BacktestResult) -> list[dict[str, object]]:
+    if data.empty:
+        return []
+
+    candle_times = [str(ts.date()) for ts in data.index]
+    candle_index_by_time = {time: idx for idx, time in enumerate(candle_times)}
+    lines: list[dict[str, object]] = []
+
+    def _line_points(anchor_time: str, price: float) -> list[dict[str, float | str]]:
+        anchor_index = candle_index_by_time.get(anchor_time)
+        if anchor_index is None:
+            return [{"time": anchor_time, "value": float(price)}]
+        left_index = max(0, anchor_index - 1)
+        right_index = min(len(candle_times) - 1, anchor_index + 1)
+        return [
+            {"time": candle_times[left_index], "value": float(price)},
+            {"time": candle_times[right_index], "value": float(price)},
+        ]
+
+    for trade in result.trades:
+        side = str(trade.side).lower()
+        is_long = side == "long"
+        entry_time = str(pd.Timestamp(trade.entry_time).date())
+        exit_time = str(pd.Timestamp(trade.exit_time).date())
+        lines.append(
+            {
+                "label": "LE" if is_long else "SE",
+                "color": "#16a34a" if is_long else "#dc2626",
+                "points": _line_points(entry_time, float(trade.entry_price)),
+            }
+        )
+        lines.append(
+            {
+                "label": "LX" if is_long else "SX",
+                "color": "#22c55e" if is_long else "#ef4444",
+                "points": _line_points(exit_time, float(trade.exit_price)),
+            }
+        )
+    return lines
+
+
 def generate_local_tradingview_chart(
     data: pd.DataFrame,
     result: BacktestResult,
@@ -93,6 +134,7 @@ def generate_local_tradingview_chart(
         "equity": _to_points(result.equity_curve.astype("float64")),
         "position": _to_points(result.positions.astype("float64")),
         "tradeMarkers": _trade_markers_payload(result),
+        "tradeEventLines": _trade_event_lines_payload(data, result),
     }
     payload["utBot"] = _ut_bot_payload(data)
 
@@ -141,19 +183,39 @@ if (!window.LightweightCharts) {{
 
   const candleSeries = chart.addCandlestickSeries();
   candleSeries.setData(payload.candles);
+  const tradeEventLineSeries = [];
+  const renderTradeEventLines = (eventLines) => {{
+    tradeEventLineSeries.forEach((series) => chart.removeSeries(series));
+    tradeEventLineSeries.length = 0;
+    (Array.isArray(eventLines) ? eventLines : []).forEach((eventLine) => {{
+      const series = chart.addLineSeries({{
+        color: eventLine.color || '#94a3b8',
+        lineWidth: 3,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+        title: eventLine.label || 'Execution',
+      }});
+      series.setData(Array.isArray(eventLine.points) ? eventLine.points : []);
+      tradeEventLineSeries.push(series);
+    }});
+  }};
+
   const allMarkers = [...payload.utBot.markers, ...payload.tradeMarkers];
   if (typeof candleSeries.setMarkers === 'function') {{
     candleSeries.setMarkers(allMarkers);
   }} else if (typeof LightweightCharts.createSeriesMarkers === 'function') {{
     LightweightCharts.createSeriesMarkers(candleSeries, allMarkers);
   }}
+  renderTradeEventLines(payload.tradeEventLines);
 
   const equitySeries = chart.addLineSeries({{ color: '#22c55e', lineWidth: 2 }});
   equitySeries.setData(payload.equity.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
   const utStopSeries = chart.addLineSeries({{ color: '#f59e0b', lineWidth: 2 }});
   utStopSeries.setData(payload.utBot.trailing_stop.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
 
-  statusEl.textContent = 'Candles + equity + UT Bot signals + trade execution markers rendered with Lightweight Charts.';
+  statusEl.textContent = 'Candles + equity + UT Bot signals + execution markers/lines rendered with Lightweight Charts.';
   window.addEventListener('resize', () => {{
     chart.applyOptions({{ width: chartEl.clientWidth }});
   }});

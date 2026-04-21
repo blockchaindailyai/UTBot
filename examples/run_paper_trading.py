@@ -1237,20 +1237,47 @@ def _build_dashboard_html(data_script_filename: str) -> str:
     }};
     syncVisibleRange(priceChart, [aoChart, acChart]);
 
-    const renderPaperTradeEventLines = (eventLines) => {{
+    const normalizeTimeKey = (value) => {{
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) return String(numeric);
+      const parsed = Date.parse(String(value));
+      if (Number.isFinite(parsed)) return String(Math.floor(parsed / 1000));
+      return String(value);
+    }};
+    const renderPaperTradeEventLines = (eventLines, candleRows) => {{
       paperTradeEventLineSeries.forEach((series) => priceChart.removeSeries(series));
       paperTradeEventLineSeries = [];
+      const candles = Array.isArray(candleRows) ? candleRows : [];
+      const candleIndexByTime = new Map(candles.map((candle, idx) => [normalizeTimeKey(candle.time), idx]));
       (eventLines || []).forEach((eventLine) => {{
+        const points = Array.isArray(eventLine.points) ? eventLine.points : [];
+        const anchorPoint = points.find((point) => Number.isFinite(Number(point?.value))) || points[0] || null;
+        const anchorPrice = Number(anchorPoint?.value ?? eventLine?.price ?? eventLine?.value);
+        const anchorTime = anchorPoint?.time ?? eventLine?.time;
+        const anchorIndex = Number(candleIndexByTime.get(normalizeTimeKey(anchorTime)));
+        let linePoints = points;
+        if (Number.isFinite(anchorPrice) && Number.isFinite(anchorIndex) && candles.length > 0) {{
+          const leftIndex = Math.max(0, anchorIndex - 1);
+          const rightIndex = Math.min(candles.length - 1, anchorIndex + 1);
+          if (leftIndex !== rightIndex) {{
+            linePoints = [
+              {{ time: candles[leftIndex].time, value: anchorPrice }},
+              {{ time: candles[rightIndex].time, value: anchorPrice }},
+            ];
+          }}
+        }}
         const series = priceChart.addLineSeries({{
           color: eventLine.color || '#94a3b8',
-          lineWidth: 2,
+          lineWidth: 3,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           lastValueVisible: false,
           priceLineVisible: false,
           crosshairMarkerVisible: false,
           title: eventLine.label || 'Execution',
         }});
-        series.setData(eventLine.points || []);
+        series.setData(linePoints);
         paperTradeEventLineSeries.push(series);
       }});
     }};
@@ -1326,7 +1353,7 @@ def _build_dashboard_html(data_script_filename: str) -> str:
       aoSeries.setData(showAOEl.checked ? (priceChartPayload.ao || []) : []);
       acSeries.setData(showACEl.checked ? (priceChartPayload.ac || []) : []);
       priceCandleSeries.setMarkers(collapseMarkers(filterMarkers(priceChartPayload.markers || [])));
-      renderPaperTradeEventLines(priceChartPayload.trade_event_lines || []);
+      renderPaperTradeEventLines(priceChartPayload.trade_event_lines || [], candleRows);
       renderPaperTradePathLines(priceChartPayload.trade_path_lines || []);
       if (candleRows.length > 0) {{
         if (!chartRangeInitialized) {{

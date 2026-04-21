@@ -56,6 +56,7 @@ def test_local_chart_includes_ut_bot_overlay(tmp_path) -> None:
     html = out.read_text(encoding="utf-8")
     assert "payload.utBot" in html
     assert "payload.tradeMarkers" in html
+    assert "payload.tradeEventLines" in html
     assert "createSeriesMarkers" in html
-    assert "LE" in html or "SE" in html
-    assert "UT Buy" in html or "UT Sell" in html
+    assert "LineStyle.Dashed" in html
+    assert "trailing_stop" in html
