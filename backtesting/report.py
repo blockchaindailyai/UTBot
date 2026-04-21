@@ -133,6 +133,34 @@ def _series_to_points(series: object, x: float, y: float, width: float, height: 
     return points
 
 
+def _series_bounds(series: object) -> tuple[float, float]:
+    values = np.asarray(series, dtype="float64")
+    finite_values = values[np.isfinite(values)]
+    if finite_values.size == 0:
+        return (0.0, 0.0)
+    return (float(np.min(finite_values)), float(np.max(finite_values)))
+
+
+def _draw_chart_axes(
+    page: _Page,
+    *,
+    chart_x: float,
+    chart_y: float,
+    chart_w: float,
+    chart_h: float,
+    x_min_label: str,
+    x_max_label: str,
+    y_min: float,
+    y_max: float,
+    y_is_percent: bool = False,
+) -> None:
+    y_formatter = (lambda value: f"{value * 100:.2f}%") if y_is_percent else (lambda value: f"{value:,.2f}")
+    _add_text(page, chart_x - 2.0, chart_y - 14.0, x_min_label, 8)
+    _add_text(page, chart_x + chart_w - 52.0, chart_y - 14.0, x_max_label, 8)
+    _add_text(page, chart_x - 56.0, chart_y + chart_h - 2.0, y_formatter(y_max), 8)
+    _add_text(page, chart_x - 56.0, chart_y - 2.0, y_formatter(y_min), 8)
+
+
 def _metric_rows(result: BacktestResult) -> list[tuple[str, str]]:
     stats = result.stats
     trades_df = result.trades_dataframe()
@@ -167,6 +195,18 @@ def _equity_drawdown_chart(page: _Page, result: BacktestResult) -> None:
 
     equity_points = _series_to_points(result.equity_curve, chart_x + 6, chart_y + 8, chart_w - 12, chart_h - 16)
     _draw_polyline(page, equity_points, (0.10, 0.70, 0.30))
+    equity_min, equity_max = _series_bounds(result.equity_curve)
+    _draw_chart_axes(
+        page,
+        chart_x=chart_x,
+        chart_y=chart_y,
+        chart_w=chart_w,
+        chart_h=chart_h,
+        x_min_label="0",
+        x_max_label=str(max(len(result.equity_curve) - 1, 0)),
+        y_min=equity_min,
+        y_max=equity_max,
+    )
 
     running_max = result.equity_curve.cummax()
     drawdown = (result.equity_curve / running_max) - 1.0
@@ -179,6 +219,19 @@ def _equity_drawdown_chart(page: _Page, result: BacktestResult) -> None:
     _draw_rect(page, dd_x, dd_y, dd_w, dd_h)
     dd_points = _series_to_points(drawdown, dd_x + 6, dd_y + 8, dd_w - 12, dd_h - 16)
     _draw_polyline(page, dd_points, (0.85, 0.20, 0.20))
+    dd_min, dd_max = _series_bounds(drawdown)
+    _draw_chart_axes(
+        page,
+        chart_x=dd_x,
+        chart_y=dd_y,
+        chart_w=dd_w,
+        chart_h=dd_h,
+        x_min_label="0",
+        x_max_label=str(max(len(drawdown) - 1, 0)),
+        y_min=dd_min,
+        y_max=dd_max,
+        y_is_percent=True,
+    )
 
 
 def _stats_panel(page: _Page, result: BacktestResult) -> None:
