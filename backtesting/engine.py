@@ -195,26 +195,58 @@ class BacktestEngine:
             raise ValueError("Data index must be sorted ascending for signal_timeframe simulation")
 
         rule = normalize_timeframe(signal_timeframe)
-        signals = pd.Series(index=data.index, dtype="int8")
-        for i in range(len(data)):
-            snapshot = data.iloc[: i + 1]
-            snapshot_agg = snapshot.resample(rule).agg(
-                {
-                    "open": "first",
-                    "high": "max",
-                    "low": "min",
-                    "close": "last",
-                    "volume": "sum",
-                }
-            )
-            snapshot_agg = snapshot_agg.dropna(subset=["open", "high", "low", "close"])
-            if snapshot_agg.empty:
-                signals.iloc[i] = 0
-                continue
-            aggregated_signal = strategy.generate_signals(snapshot_agg).iloc[-1]
-            signals.iloc[i] = int(aggregated_signal) if pd.notna(aggregated_signal) else 0
+        source_freq = data.index.to_series().diff().dropna().median()
+        try:
+            target_freq = pd.to_timedelta(rule)
+        except (ValueError, TypeError):
+            target_freq = None
+        if pd.notna(source_freq) and target_freq is not None and target_freq <= source_freq:
+            return strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
 
-        return signals.fillna(0).astype("int8")
+        signals = pd.Series(index=data.index, dtype="int8")
+        closed_bars = pd.DataFrame(columns=data.columns)
+        aggregation_has_volume = "volume" in data.columns
+
+        for bucket_start, bucket in data.groupby(pd.Grouper(freq=rule), sort=True):
+            if bucket.empty:
+                continue
+
+            bucket_open = float(bucket["open"].iloc[0])
+            bucket_high = bucket["high"].astype("float64").cummax()
+            bucket_low = bucket["low"].astype("float64").cummin()
+            bucket_close = bucket["close"].astype("float64")
+            bucket_volume = (
+                bucket["volume"].astype("float64").cumsum()
+                if aggregation_has_volume
+                else pd.Series(0.0, index=bucket.index, dtype="float64")
+            )
+
+            for ts in bucket.index:
+                partial_bar = {
+                    "open": bucket_open,
+                    "high": float(bucket_high.loc[ts]),
+                    "low": float(bucket_low.loc[ts]),
+                    "close": float(bucket_close.loc[ts]),
+                }
+                if aggregation_has_volume:
+                    partial_bar["volume"] = float(bucket_volume.loc[ts])
+
+                partial_df = pd.DataFrame([partial_bar], index=pd.DatetimeIndex([bucket_start]))
+                snapshot_agg = pd.concat([closed_bars, partial_df]) if len(closed_bars) else partial_df
+                aggregated_signal = strategy.generate_signals(snapshot_agg).iloc[-1]
+                signals.loc[ts] = int(aggregated_signal) if pd.notna(aggregated_signal) else 0
+
+            final_bar = {
+                "open": bucket_open,
+                "high": float(bucket_high.iloc[-1]),
+                "low": float(bucket_low.iloc[-1]),
+                "close": float(bucket_close.iloc[-1]),
+            }
+            if aggregation_has_volume:
+                final_bar["volume"] = float(bucket_volume.iloc[-1])
+            closed_bars.loc[bucket_start, list(final_bar.keys())] = list(final_bar.values())
+
+        return signals.reindex(data.index).fillna(0).astype("int8")
 
     def _compute_position_notional(self, capital: float, close_returns: pd.Series, bar_index: int) -> float:
         mode = self.config.position_size_mode.strip().lower()
