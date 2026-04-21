@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 from .engine import BacktestResult
 
 
@@ -111,13 +113,14 @@ def _draw_polyline(page: _Page, points: list[tuple[float, float]], rgb: tuple[fl
     page.commands.append("0 0 0 RG")
 
 
-def _series_to_points(series: pd.Series, x: float, y: float, width: float, height: float) -> list[tuple[float, float]]:
-    values = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-    if values.empty:
+def _series_to_points(series: object, x: float, y: float, width: float, height: float) -> list[tuple[float, float]]:
+    raw_values = np.asarray(series, dtype="float64")
+    values = raw_values[np.isfinite(raw_values)]
+    if values.size == 0:
         return []
 
-    vmin = float(values.min())
-    vmax = float(values.max())
+    vmin = float(np.min(values))
+    vmax = float(np.max(values))
     if np.isclose(vmax, vmin):
         vmax = vmin + 1.0
 

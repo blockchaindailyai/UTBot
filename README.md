@@ -15,16 +15,9 @@ pip install -e .
 python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ma_cross --fast 20 --slow 50 --out .\artifacts
 ```
 
-UT Bot strategy example with sizing controls:
-
-```powershell
-python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --ut-key-value 1 --ut-atr-period 10 --size 0.5 --contracts 2 --out .\artifacts_ut
-```
-
 ## Outputs
 
 - `stats.json`
 - `trades.csv`
-- `chart.html` (includes UT Bot trailing stop + Buy/Sell signal markers)
+- `chart.html`
 - `report.pdf`
-- `ut_bot_strategy.pine` (paste into TradingView Pine Editor, then click **Add to chart**)

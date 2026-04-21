@@ -13,9 +13,6 @@ class BacktestConfig:
     initial_capital: float = 10_000.0
     fee_rate: float = 0.0
     slippage_rate: float = 0.0
-    size: float = 1.0
-    contracts: float = 1.0
-    execute_on_signal_bar: bool = False
 
 
 @dataclass(slots=True)
@@ -54,10 +51,6 @@ class BacktestEngine:
             raise ValueError(f"Missing required columns: {', '.join(missing)}")
         if len(data) < 2:
             raise ValueError("At least two rows are required")
-        if self.config.size <= 0:
-            raise ValueError("size must be positive")
-        if self.config.contracts <= 0:
-            raise ValueError("contracts must be positive")
 
         signals = strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
         close = data["close"].astype("float64")
@@ -73,14 +66,23 @@ class BacktestEngine:
         trades: list[Trade] = []
 
         for i in range(1, len(data)):
+            signal_prev = int(signals.iloc[i - 1])
             signal_now = int(signals.iloc[i])
             price = float(close.iloc[i])
             ts = data.index[i]
-            desired_signal = signal_now if self.config.execute_on_signal_bar else int(signals.iloc[i - 1])
-            current_signal = 0 if units == 0 else (1 if units > 0 else -1)
 
-            if units != 0 and desired_signal != current_signal:
-                fill = price * (1.0 - self.config.slippage_rate * current_signal)
+            if units == 0 and signal_prev != 0:
+                fill = price * (1.0 + self.config.slippage_rate * signal_prev)
+                fee = capital * self.config.fee_rate
+                deployable = max(capital - fee, 0.0)
+                units = (deployable / fill) * signal_prev
+                entry_price = fill
+                entry_time = ts
+                entry_index = i
+                capital -= fee
+
+            if units != 0 and signal_now != signal_prev:
+                fill = price * (1.0 - self.config.slippage_rate * (1 if units > 0 else -1))
                 gross = (fill - entry_price) * units
                 fee = abs(fill * units) * self.config.fee_rate
                 pnl = gross - fee
@@ -98,17 +100,6 @@ class BacktestEngine:
                 )
                 trades.append(trade)
                 units = 0.0
-                current_signal = 0
-
-            if units == 0 and desired_signal != 0:
-                fill = price * (1.0 + self.config.slippage_rate * desired_signal)
-                notional = capital * self.config.size * self.config.contracts
-                fee = notional * self.config.fee_rate
-                units = (notional / fill) * desired_signal
-                entry_price = fill
-                entry_time = ts
-                entry_index = i
-                capital -= fee
 
             mark_to_market = capital if units == 0 else capital + (price - entry_price) * units
             equity_values.append(float(mark_to_market))
