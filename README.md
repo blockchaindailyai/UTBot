@@ -21,6 +21,12 @@ UT Bot strategy example with position sizing controls:
 python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --ut-key-value 1 --ut-atr-period 10 --size-mode equity_percent --size-value 0.5 --out .\artifacts_ut
 ```
 
+Intrabar-style higher-timeframe signals (for example, build progressive 1D bars from 5m/1h source data while still executing on source bars):
+
+```powershell
+python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --out .\artifacts_intrabar
+```
+
 Available sizing modes:
 - `static_usd`: fixed USD notional per trade (`--size-value` is USD amount).
 - `equity_percent`: scales trade notional with account equity (`--size-value` is a decimal fraction, e.g. `0.5` = 50%).
