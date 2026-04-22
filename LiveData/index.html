@@ -792,11 +792,12 @@
       if (strategyRevisionChanged) {
         renderTradeEventLines(payload.trade_event_lines || [], rows);
         renderTradePathLines(payload.trade_path_lines || []);
-        candleSeries.setMarkers(showWisemanSignalsEl.checked ? filterMarkers(payload.markers || []) : []);
         lastStrategyRevision = payload.strategy_revision;
       } else if (forceReset) {
-        candleSeries.setMarkers(showWisemanSignalsEl.checked ? filterMarkers(payload.markers || []) : []);
+        renderTradeEventLines(payload.trade_event_lines || [], rows);
+        renderTradePathLines(payload.trade_path_lines || []);
       }
+      candleSeries.setMarkers(showWisemanSignalsEl.checked ? filterMarkers(payload.markers || []) : []);
 
       if (rows.length > 0) {
         if (refit || !hasFittedInitialRange) {
