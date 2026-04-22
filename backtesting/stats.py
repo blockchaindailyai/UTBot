@@ -42,15 +42,25 @@ def compute_performance_stats(
     trades = list(trades)
     total_return = _safe_div(equity_curve.iloc[-1], equity_curve.iloc[0]) - 1
 
-    n_periods = len(returns)
-    years = n_periods / periods_per_year if periods_per_year else 0
+    realized_returns = returns.iloc[1:] if len(returns) > 1 else returns
+
+    if isinstance(equity_curve.index, pd.DatetimeIndex) and len(equity_curve.index) > 1:
+        elapsed_seconds = float((equity_curve.index[-1] - equity_curve.index[0]).total_seconds())
+        years = elapsed_seconds / (365.25 * 24 * 60 * 60) if elapsed_seconds > 0 else 0.0
+    else:
+        n_periods = len(realized_returns)
+        years = n_periods / periods_per_year if periods_per_year else 0.0
+
     cagr = (equity_curve.iloc[-1] / equity_curve.iloc[0]) ** (1 / years) - 1 if years > 0 else 0.0
 
-    vol = returns.std(ddof=0) * np.sqrt(periods_per_year)
-    downside = returns[returns < 0].std(ddof=0) * np.sqrt(periods_per_year)
+    vol = realized_returns.std(ddof=0) * np.sqrt(periods_per_year)
+    downside = realized_returns[realized_returns < 0].std(ddof=0) * np.sqrt(periods_per_year)
 
-    sharpe = _safe_div(returns.mean() * periods_per_year, returns.std(ddof=0) * np.sqrt(periods_per_year))
-    sortino = _safe_div(returns.mean() * periods_per_year, downside)
+    sharpe = _safe_div(
+        realized_returns.mean() * periods_per_year,
+        realized_returns.std(ddof=0) * np.sqrt(periods_per_year),
+    )
+    sortino = _safe_div(realized_returns.mean() * periods_per_year, downside)
 
     rolling_max = equity_curve.cummax()
     drawdown = (equity_curve / rolling_max) - 1

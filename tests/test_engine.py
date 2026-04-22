@@ -1360,6 +1360,7 @@ def test_hourly_period_inference_and_trade_ledger() -> None:
     result = engine.run(data, SmaCrossoverStrategy(fast=5, slow=20))
     trades_df = result.trades_dataframe()
 
+    assert 8_700 <= result.stats["periods_per_year"] <= 8_800
     assert "entry_time" in trades_df.columns
     assert "exit_time" in trades_df.columns
 
