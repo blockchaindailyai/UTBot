@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from .resample import normalize_timeframe
-from .stats import compute_performance_stats
+from .stats import compute_performance_stats, infer_periods_per_year
 from .strategy import Strategy
 
 
@@ -183,11 +183,12 @@ class BacktestEngine:
         equity = pd.Series(equity_values, index=data.index, dtype="float64")
         returns = equity.pct_change().fillna(0.0)
         positions_series = pd.Series(positions, index=data.index, dtype="int8")
+        periods_per_year = infer_periods_per_year(data.index, default=252)
         stats = compute_performance_stats(
             equity_curve=equity,
             returns=returns,
             trades=trades,
-            periods_per_year=252,
+            periods_per_year=periods_per_year,
             positions=positions_series,
         )
         stats["final_equity"] = float(equity.iloc[-1])
