@@ -21,6 +21,36 @@ UT Bot strategy example with position sizing controls:
 python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --ut-key-value 1 --ut-atr-period 10 --size-mode equity_percent --size-value 0.5 --out .\artifacts_ut
 ```
 
+Intrabar-style higher-timeframe signals (for example, build progressive 1D bars from 5m/1h source data while still executing on source bars):
+
+```powershell
+python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --out .\artifacts_intrabar
+```
+
+By default, `--signal-timeframe` uses **progressive intrabar simulation** (signals can change intrabar).  
+If you want strict higher-timeframe close-only signals, use:
+
+```powershell
+python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --signal-timeframe-closed-only --out .\artifacts_intrabar_closed
+```
+
+For dense source bars (like 5m), cap intrabar evaluations per 1D bar to speed up runs:
+
+```powershell
+python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --max-intrabar-evaluations-per-signal-bar 24 --out .\artifacts_intrabar_fast
+```
+
+You can also cap higher-timeframe history used in each intrabar re-evaluation:
+
+```powershell
+python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --max-intrabar-evaluations-per-signal-bar 24 --signal-timeframe-history-bars 20 --out .\artifacts_intrabar_faster
+```
+
+UT Bot entries/exits use signal-bar close prices (market-at-signal behavior) when UT signal changes, and engine-side fills are constrained to the source bar's achievable price range.
+When `--signal-timeframe` is set to a higher interval (for example `1D`), `chart.html` is rendered from that higher-timeframe OHLCV instead of the lower source bars.
+When charting at a higher timeframe, equity/position overlays and execution markers are aligned/snapped to the chart candle timestamps so the x-axis remains scaled to that timeframe.
+Higher-timeframe intrabar signal simulation is constrained to at most one side change per higher-timeframe candle (for example, one buy or one sell per daily candle).
+
 Available sizing modes:
 - `static_usd`: fixed USD notional per trade (`--size-value` is USD amount).
 - `equity_percent`: scales trade notional with account equity (`--size-value` is a decimal fraction, e.g. `0.5` = 50%).
