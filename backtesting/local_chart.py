@@ -9,9 +9,28 @@ from .engine import BacktestResult
 from .strategy import compute_ut_bot_components
 
 
-def _to_points(series: pd.Series) -> list[dict[str, float | str]]:
+def _to_chart_time(ts: pd.Timestamp) -> int:
+    timestamp = pd.Timestamp(ts)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return int(timestamp.timestamp())
+
+
+def _align_to_candle_time(ts: pd.Timestamp, candle_times: list[int]) -> int:
+    if not candle_times:
+        return _to_chart_time(ts)
+    target = _to_chart_time(ts)
+    for candle_time in reversed(candle_times):
+        if candle_time <= target:
+            return candle_time
+    return candle_times[0]
+
+
+def _to_points(series: pd.Series) -> list[dict[str, float | int]]:
     return [
-        {"time": str(ts), "value": float(value)}
+        {"time": _to_chart_time(pd.Timestamp(ts)), "value": float(value)}
         for ts, value in series.items()
     ]
 
@@ -29,11 +48,27 @@ def _ut_bot_payload(
     if len(trailing_stop) == 0:
         return {"trailing_stop": [], "markers": []}
 
-    markers: list[dict[str, str]] = []
+    markers: list[dict[str, str | int]] = []
     for ts in trailing_stop.index[buy_signal]:
-        markers.append({"time": str(ts.date()), "position": "belowBar", "color": "#22c55e", "shape": "arrowUp", "text": "UT Buy"})
+        markers.append(
+            {
+                "time": _to_chart_time(pd.Timestamp(ts)),
+                "position": "belowBar",
+                "color": "#22c55e",
+                "shape": "arrowUp",
+                "text": "UT Buy",
+            }
+        )
     for ts in trailing_stop.index[sell_signal]:
-        markers.append({"time": str(ts.date()), "position": "aboveBar", "color": "#ef4444", "shape": "arrowDown", "text": "UT Sell"})
+        markers.append(
+            {
+                "time": _to_chart_time(pd.Timestamp(ts)),
+                "position": "aboveBar",
+                "color": "#ef4444",
+                "shape": "arrowDown",
+                "text": "UT Sell",
+            }
+        )
     markers.sort(key=lambda marker: marker["time"])
 
     return {
@@ -42,13 +77,13 @@ def _ut_bot_payload(
     }
 
 
-def _trade_markers_payload(result: BacktestResult) -> list[dict[str, str]]:
-    markers: list[dict[str, str]] = []
+def _trade_markers_payload(result: BacktestResult, candle_times: list[int]) -> list[dict[str, str | int]]:
+    markers: list[dict[str, str | int]] = []
     for trade in result.trades:
         side = str(trade.side).lower()
         is_long = side == "long"
-        entry_time = str(pd.Timestamp(trade.entry_time).date())
-        exit_time = str(pd.Timestamp(trade.exit_time).date())
+        entry_time = _align_to_candle_time(pd.Timestamp(trade.entry_time), candle_times)
+        exit_time = _align_to_candle_time(pd.Timestamp(trade.exit_time), candle_times)
         markers.append(
             {
                 "time": entry_time,
@@ -75,11 +110,11 @@ def _trade_event_lines_payload(data: pd.DataFrame, result: BacktestResult) -> li
     if data.empty:
         return []
 
-    candle_times = [str(ts.date()) for ts in data.index]
+    candle_times = [_to_chart_time(pd.Timestamp(ts)) for ts in data.index]
     candle_index_by_time = {time: idx for idx, time in enumerate(candle_times)}
     lines: list[dict[str, object]] = []
 
-    def _line_points(anchor_time: str, price: float) -> list[dict[str, float | str]]:
+    def _line_points(anchor_time: int, price: float) -> list[dict[str, float | int]]:
         anchor_index = candle_index_by_time.get(anchor_time)
         if anchor_index is None:
             return [{"time": anchor_time, "value": float(price)}]
@@ -93,8 +128,8 @@ def _trade_event_lines_payload(data: pd.DataFrame, result: BacktestResult) -> li
     for trade in result.trades:
         side = str(trade.side).lower()
         is_long = side == "long"
-        entry_time = str(pd.Timestamp(trade.entry_time).date())
-        exit_time = str(pd.Timestamp(trade.exit_time).date())
+        entry_time = _align_to_candle_time(pd.Timestamp(trade.entry_time), candle_times)
+        exit_time = _align_to_candle_time(pd.Timestamp(trade.exit_time), candle_times)
         lines.append(
             {
                 "label": "LE" if is_long else "SE",
@@ -120,7 +155,7 @@ def generate_local_tradingview_chart(
     path = Path(output_path)
     candles = [
         {
-            "time": str(ts.date()),
+            "time": _to_chart_time(pd.Timestamp(ts)),
             "open": float(row["open"]),
             "high": float(row["high"]),
             "low": float(row["low"]),
@@ -128,12 +163,15 @@ def generate_local_tradingview_chart(
         }
         for ts, row in data[["open", "high", "low", "close"]].iterrows()
     ]
+    candle_times = [int(item["time"]) for item in candles]
+    equity = result.equity_curve.astype("float64").reindex(data.index, method="ffill").bfill()
+    positions = result.positions.astype("float64").reindex(data.index, method="ffill").fillna(0.0)
     payload = {
         "candles": candles,
         "price": _to_points(data["close"].astype("float64")),
-        "equity": _to_points(result.equity_curve.astype("float64")),
-        "position": _to_points(result.positions.astype("float64")),
-        "tradeMarkers": _trade_markers_payload(result),
+        "equity": _to_points(equity),
+        "position": _to_points(positions),
+        "tradeMarkers": _trade_markers_payload(result, candle_times),
         "tradeEventLines": _trade_event_lines_payload(data, result),
     }
     payload["utBot"] = _ut_bot_payload(data)
@@ -217,9 +255,9 @@ if (!window.LightweightCharts) {{
     priceScaleId: 'left',
     title: 'Equity',
   }});
-  equitySeries.setData(payload.equity.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
+  equitySeries.setData(payload.equity);
   const utStopSeries = chart.addLineSeries({{ color: '#f59e0b', lineWidth: 2 }});
-  utStopSeries.setData(payload.utBot.trailing_stop.map(point => ({{ time: point.time.slice(0, 10), value: point.value }})));
+  utStopSeries.setData(payload.utBot.trailing_stop);
 
   statusEl.textContent = 'Candles + equity + UT Bot signals + execution markers/lines rendered with Lightweight Charts.';
   window.addEventListener('resize', () => {{
