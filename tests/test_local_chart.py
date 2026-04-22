@@ -141,3 +141,41 @@ def test_local_chart_snaps_intraday_execution_to_daily_candles(tmp_path) -> None
     candle_times = [item["time"] for item in payload["candles"]]
     assert len(payload["equity"]) == len(payload["candles"])
     assert {item["time"] for item in payload["tradeMarkers"]}.issubset(set(candle_times))
+
+
+def test_local_chart_dedupes_duplicate_timestamps_in_payload(tmp_path) -> None:
+    idx = pd.to_datetime(
+        [
+            "2024-01-01T00:00:00Z",
+            "2024-01-01T00:00:00Z",
+            "2024-01-02T00:00:00Z",
+        ]
+    )
+    close = pd.Series([100.0, 101.0, 102.0], index=idx, dtype="float64")
+    data = pd.DataFrame(
+        {
+            "open": close - 0.1,
+            "high": close + 0.2,
+            "low": close - 0.2,
+            "close": close,
+        },
+        index=idx,
+    )
+    result = BacktestResult(
+        equity_curve=close.copy(),
+        returns=close.pct_change().fillna(0.0),
+        positions=pd.Series(0, index=idx, dtype="int8"),
+        trades=[],
+        stats={},
+    )
+    out = tmp_path / "chart_dup.html"
+    generate_local_tradingview_chart(data, result, out)
+
+    html = out.read_text(encoding="utf-8")
+    match = re.search(r"const payload = (\{.*?\});\nconst statusEl", html, re.DOTALL)
+    assert match is not None
+    payload = json.loads(match.group(1))
+    candle_times = [item["time"] for item in payload["candles"]]
+    ut_times = [item["time"] for item in payload["utBot"]["trailing_stop"]]
+    assert candle_times == sorted(set(candle_times))
+    assert ut_times == sorted(set(ut_times))

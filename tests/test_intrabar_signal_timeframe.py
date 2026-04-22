@@ -221,3 +221,33 @@ def test_ut_bot_strategy_matches_core_ut_position_state() -> None:
     strategy_signals = strategy.generate_signals(data)
 
     pd.testing.assert_series_equal(strategy_signals.astype("int8"), expected_position_state.astype("int8"))
+
+
+def test_ut_bot_signal_fill_prices_match_signal_bar_close() -> None:
+    idx = pd.date_range("2024-01-01", periods=30, freq="4h", tz="UTC")
+    close = pd.Series(range(len(idx)), index=idx, dtype="float64") + 100.0
+    data = pd.DataFrame(
+        {
+            "open": close - 0.25,
+            "high": close + 0.5,
+            "low": close - 0.5,
+            "close": close,
+            "volume": 1_000.0,
+        },
+        index=idx,
+    )
+
+    strategy = UTBotStrategy(key_value=1.0, atr_period=10)
+    signals = strategy.generate_signals(data)
+    fills = strategy.signal_fill_prices
+    assert isinstance(fills, pd.Series)
+    signal_change_rows = signals != signals.shift(1)
+    signal_change_rows.iloc[0] = False
+    signal_fill_rows = fills.notna()
+
+    assert signal_fill_rows.equals(signal_change_rows)
+    if signal_fill_rows.any():
+        pd.testing.assert_series_equal(
+            fills.loc[signal_fill_rows].astype("float64"),
+            data["close"].loc[signal_fill_rows].astype("float64"),
+        )

@@ -28,11 +28,23 @@ def _align_to_candle_time(ts: pd.Timestamp, candle_times: list[int]) -> int:
     return candle_times[0]
 
 
+def _dedupe_sorted_points(points: list[dict[str, float | int]]) -> list[dict[str, float | int]]:
+    deduped: dict[int, float] = {}
+    for point in points:
+        ts = int(point["time"])
+        value = float(point["value"])
+        if not pd.notna(value):
+            continue
+        deduped[ts] = value
+    return [{"time": ts, "value": deduped[ts]} for ts in sorted(deduped)]
+
+
 def _to_points(series: pd.Series) -> list[dict[str, float | int]]:
-    return [
+    raw = [
         {"time": _to_chart_time(pd.Timestamp(ts)), "value": float(value)}
         for ts, value in series.items()
     ]
+    return _dedupe_sorted_points(raw)
 
 
 def _ut_bot_payload(
@@ -163,6 +175,8 @@ def generate_local_tradingview_chart(
         }
         for ts, row in data[["open", "high", "low", "close"]].iterrows()
     ]
+    candles_by_time: dict[int, dict[str, float | int]] = {int(item["time"]): item for item in candles}
+    candles = [candles_by_time[ts] for ts in sorted(candles_by_time)]
     candle_times = [int(item["time"]) for item in candles]
     equity = result.equity_curve.astype("float64").reindex(data.index, method="ffill").bfill()
     positions = result.positions.astype("float64").reindex(data.index, method="ffill").fillna(0.0)

@@ -46,7 +46,7 @@ You can also cap higher-timeframe history used in each intrabar re-evaluation:
 python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --max-intrabar-evaluations-per-signal-bar 24 --signal-timeframe-history-bars 20 --out .\artifacts_intrabar_faster
 ```
 
-UT Bot entries/exits can use strategy-provided signal fill prices when available, instead of always filling at bar close.
+UT Bot entries/exits use signal-bar close prices (market-at-signal behavior) when UT signal changes, and engine-side fills are constrained to the source bar's achievable price range.
 When `--signal-timeframe` is set to a higher interval (for example `1D`), `chart.html` is rendered from that higher-timeframe OHLCV instead of the lower source bars.
 When charting at a higher timeframe, equity/position overlays and execution markers are aligned/snapped to the chart candle timestamps so the x-axis remains scaled to that timeframe.
 Higher-timeframe intrabar signal simulation is constrained to at most one side change per higher-timeframe candle (for example, one buy or one sell per daily candle).

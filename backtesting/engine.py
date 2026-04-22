@@ -105,7 +105,13 @@ class BacktestEngine:
         for i in range(1, len(data)):
             signal_now = int(signals.iloc[i])
             signal_fill_price_now = float(signal_fill_prices.iloc[i]) if pd.notna(signal_fill_prices.iloc[i]) else float("nan")
-            price = signal_fill_price_now if pd.notna(signal_fill_price_now) else float(close.iloc[i])
+            bar_close = float(close.iloc[i])
+            bar_high = float(data["high"].iloc[i])
+            bar_low = float(data["low"].iloc[i])
+            if pd.notna(signal_fill_price_now) and bar_low <= signal_fill_price_now <= bar_high:
+                price = signal_fill_price_now
+            else:
+                price = bar_close
             ts = data.index[i]
             desired_signal = signal_now if self.config.execute_on_signal_bar else int(signals.iloc[i - 1])
             current_signal = 0 if units == 0 else (1 if units > 0 else -1)

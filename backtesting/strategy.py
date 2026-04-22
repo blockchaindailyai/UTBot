@@ -117,14 +117,15 @@ class UTBotStrategy(Strategy):
         self.signal_fill_prices: pd.Series | None = None
 
     def generate_signals(self, data: pd.DataFrame) -> pd.Series:
-        trailing_stop, buy_signal, sell_signal, position_state = compute_ut_bot_components(
+        _, buy_signal, sell_signal, position_state = compute_ut_bot_components(
             data=data,
             key_value=self.key_value,
             atr_period=self.atr_period,
         )
+        close = data["close"].astype("float64")
         fills = pd.Series(float("nan"), index=data.index, dtype="float64")
         signal_rows = buy_signal | sell_signal
-        fills.loc[signal_rows] = trailing_stop.loc[signal_rows].astype("float64")
+        fills.loc[signal_rows] = close.loc[signal_rows].astype("float64")
 
         self.signal_fill_prices = fills
         return position_state.astype("int8")
