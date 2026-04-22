@@ -114,11 +114,53 @@ class UTBotStrategy(Strategy):
             raise ValueError("atr_period must be positive")
         self.key_value = float(key_value)
         self.atr_period = int(atr_period)
+        self.signal_fill_prices: pd.Series | None = None
 
     def generate_signals(self, data: pd.DataFrame) -> pd.Series:
-        _, _, _, signals = compute_ut_bot_components(
+        trailing_stop, _, _, _ = compute_ut_bot_components(
             data=data,
             key_value=self.key_value,
             atr_period=self.atr_period,
         )
+        high = data["high"].astype("float64")
+        low = data["low"].astype("float64")
+        close = data["close"].astype("float64")
+        open_ = data["open"].astype("float64")
+        signals = pd.Series(0, index=data.index, dtype="int8")
+        fills = pd.Series(float("nan"), index=data.index, dtype="float64")
+        if len(data) == 0:
+            self.signal_fill_prices = fills
+            return signals
+
+        pos = 0
+        for i in range(1, len(data)):
+            prev_close = float(close.iloc[i - 1])
+            prev_stop = float(trailing_stop.iloc[i - 1])
+            stop = float(trailing_stop.iloc[i])
+            hi = float(high.iloc[i])
+            lo = float(low.iloc[i])
+            op = float(open_.iloc[i])
+            cl = float(close.iloc[i])
+
+            buy_touch = prev_close <= prev_stop and hi >= stop
+            sell_touch = prev_close >= prev_stop and lo <= stop
+
+            if buy_touch and sell_touch:
+                if abs(op - stop) <= abs(cl - stop):
+                    buy_touch = op <= stop
+                    sell_touch = op >= stop
+                else:
+                    buy_touch = cl >= stop
+                    sell_touch = cl <= stop
+
+            if buy_touch:
+                pos = 1
+                fills.iloc[i] = stop
+            elif sell_touch:
+                pos = -1
+                fills.iloc[i] = stop
+
+            signals.iloc[i] = pos
+
+        self.signal_fill_prices = fills
         return signals
