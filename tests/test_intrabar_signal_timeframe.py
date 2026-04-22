@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from backtesting import BacktestConfig, BacktestEngine
-from backtesting.strategy import Strategy
+from backtesting.strategy import Strategy, UTBotStrategy, compute_ut_bot_components
 
 
 class DailyMomentumStrategy(Strategy):
@@ -200,3 +200,24 @@ def test_signal_timeframe_default_mode_aligns_to_closed_daily_signals() -> None:
         day_changes = (day_signals != day_signals.shift(1)) & day_signals.shift(1).notna()
         if day_changes.any():
             assert day_changes[day_changes].index[0] == day_signals.index[-1]
+
+
+def test_ut_bot_strategy_matches_core_ut_position_state() -> None:
+    idx = pd.date_range("2024-01-01", periods=40, freq="4h", tz="UTC")
+    close = pd.Series(range(len(idx)), index=idx, dtype="float64") + 100.0
+    data = pd.DataFrame(
+        {
+            "open": close - 0.3,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": 1_000.0,
+        },
+        index=idx,
+    )
+
+    _, _, _, expected_position_state = compute_ut_bot_components(data, key_value=1.0, atr_period=10)
+    strategy = UTBotStrategy(key_value=1.0, atr_period=10)
+    strategy_signals = strategy.generate_signals(data)
+
+    pd.testing.assert_series_equal(strategy_signals.astype("int8"), expected_position_state.astype("int8"))
