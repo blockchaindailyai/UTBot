@@ -26,6 +26,16 @@ class CountingSignalStrategy(Strategy):
         return pd.Series(1, index=data.index, dtype="int8")
 
 
+class AlternatingSignalStrategy(Strategy):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_signals(self, data: pd.DataFrame) -> pd.Series:
+        self.calls += 1
+        side = 1 if self.calls % 2 else -1
+        return pd.Series(side, index=data.index, dtype="int8")
+
+
 def test_signal_timeframe_detects_intraday_flip_for_daily_bar() -> None:
     idx = pd.date_range("2024-01-01", periods=12, freq="4h", tz="UTC")
     data = pd.DataFrame(
@@ -126,3 +136,31 @@ def test_signal_timeframe_history_bars_limits_strategy_input_length() -> None:
     engine.run(data, strategy)
 
     assert strategy.max_seen_len <= 3
+
+
+def test_signal_timeframe_limits_to_one_side_change_per_bucket() -> None:
+    idx = pd.date_range("2024-01-01", periods=36, freq="1h", tz="UTC")
+    close = pd.Series(range(len(idx)), index=idx, dtype="float64") + 100.0
+    data = pd.DataFrame(
+        {
+            "open": close - 0.2,
+            "high": close + 0.6,
+            "low": close - 0.6,
+            "close": close,
+            "volume": 1_000.0,
+        },
+        index=idx,
+    )
+    strategy = AlternatingSignalStrategy()
+    engine = BacktestEngine(
+        BacktestConfig(
+            signal_timeframe="1D",
+            execute_on_signal_bar=True,
+            max_intrabar_evaluations_per_signal_bar=24,
+        )
+    )
+    signals, _ = engine._generate_signals(data, strategy)  # noqa: SLF001
+
+    for day, day_signals in signals.groupby(signals.index.floor("1D")):
+        transitions = int(((day_signals != day_signals.shift(1)) & day_signals.shift(1).notna()).sum())
+        assert transitions <= 1, f"Detected more than one side change within day {day}"

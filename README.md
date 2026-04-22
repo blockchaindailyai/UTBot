@@ -42,6 +42,7 @@ python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy u
 UT Bot entries/exits now use intrabar trigger fill prices (stop-cross price) when available, instead of always filling at bar close.
 When `--signal-timeframe` is set to a higher interval (for example `1D`), `chart.html` is rendered from that higher-timeframe OHLCV instead of the lower source bars.
 When charting at a higher timeframe, equity/position overlays and execution markers are aligned/snapped to the chart candle timestamps so the x-axis remains scaled to that timeframe.
+Higher-timeframe intrabar signal simulation is constrained to at most one side change per higher-timeframe candle (for example, one buy or one sell per daily candle).
 
 Available sizing modes:
 - `static_usd`: fixed USD notional per trade (`--size-value` is USD amount).

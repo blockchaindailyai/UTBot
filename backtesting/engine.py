@@ -230,6 +230,7 @@ class BacktestEngine:
         fill_prices = pd.Series(float("nan"), index=data.index, dtype="float64")
         closed_bars = pd.DataFrame(columns=data.columns)
         aggregation_has_volume = "volume" in data.columns
+        prior_bucket_side = 0
 
         for bucket_start, bucket in data.groupby(pd.Grouper(freq=rule), sort=True):
             if bucket.empty:
@@ -288,8 +289,26 @@ class BacktestEngine:
                         bucket_fill_prices.loc[ts] = float(maybe_fill)
 
             bucket_signals = bucket_signals.ffill().bfill().fillna(0.0)
-            signals.loc[bucket.index] = bucket_signals.astype("int8")
-            fill_prices.loc[bucket.index] = bucket_fill_prices
+            bucket_signals_int = bucket_signals.astype("int8")
+            filtered_bucket_signals = pd.Series(index=bucket.index, dtype="int8")
+            filtered_bucket_fills = bucket_fill_prices.copy()
+            current_side = int(prior_bucket_side)
+            side_changes = 0
+
+            for ts in bucket.index:
+                proposed_side = int(bucket_signals_int.loc[ts])
+                if proposed_side != current_side:
+                    if side_changes >= 1:
+                        filtered_bucket_signals.loc[ts] = current_side
+                        filtered_bucket_fills.loc[ts] = float("nan")
+                        continue
+                    current_side = proposed_side
+                    side_changes += 1
+                filtered_bucket_signals.loc[ts] = current_side
+
+            prior_bucket_side = current_side
+            signals.loc[bucket.index] = filtered_bucket_signals
+            fill_prices.loc[bucket.index] = filtered_bucket_fills
 
             final_bar = {
                 "open": bucket_open,
