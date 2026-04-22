@@ -25,6 +25,7 @@ class BacktestConfig:
     volatility_max_scale: float = 3.0
     execute_on_signal_bar: bool = False
     signal_timeframe: str | None = None
+    signal_timeframe_progressive: bool = True
     max_intrabar_evaluations_per_signal_bar: int = 24
     signal_timeframe_history_bars: int | None = None
 
@@ -211,6 +212,9 @@ class BacktestEngine:
         if not data.index.is_monotonic_increasing:
             raise ValueError("Data index must be sorted ascending for signal_timeframe simulation")
 
+        if not self.config.signal_timeframe_progressive:
+            return self._generate_signals_on_closed_timeframe(data=data, strategy=strategy, signal_timeframe=signal_timeframe)
+
         rule = normalize_timeframe(signal_timeframe)
         source_freq = data.index.to_series().diff().dropna().median()
         try:
@@ -324,6 +328,65 @@ class BacktestEngine:
             signals.reindex(data.index).fillna(0).astype("int8"),
             fill_prices.reindex(data.index).astype("float64"),
         )
+
+    def _generate_signals_on_closed_timeframe(
+        self,
+        data: pd.DataFrame,
+        strategy: Strategy,
+        signal_timeframe: str,
+    ) -> tuple[pd.Series, pd.Series]:
+        rule = normalize_timeframe(signal_timeframe)
+        source_freq = data.index.to_series().diff().dropna().median()
+        try:
+            target_freq = pd.to_timedelta(rule)
+        except (ValueError, TypeError):
+            target_freq = None
+
+        if pd.notna(source_freq) and target_freq is not None and target_freq <= source_freq:
+            signals = strategy.generate_signals(data).reindex(data.index).fillna(0).astype("int8")
+            fill_prices = getattr(strategy, "signal_fill_prices", None)
+            if isinstance(fill_prices, pd.Series):
+                fills = fill_prices.reindex(data.index).astype("float64")
+            else:
+                fills = pd.Series(float("nan"), index=data.index, dtype="float64")
+            return signals, fills
+
+        htf = data.resample(rule).agg(
+            {
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                **({"volume": "sum"} if "volume" in data.columns else {}),
+            }
+        ).dropna(subset=["open", "high", "low", "close"])
+
+        htf_signals = strategy.generate_signals(htf).reindex(htf.index).fillna(0).astype("int8")
+        htf_fill_prices = getattr(strategy, "signal_fill_prices", None)
+        htf_fills = (
+            htf_fill_prices.reindex(htf.index).astype("float64")
+            if isinstance(htf_fill_prices, pd.Series)
+            else pd.Series(float("nan"), index=htf.index, dtype="float64")
+        )
+
+        signals = pd.Series(0, index=data.index, dtype="int8")
+        fills = pd.Series(float("nan"), index=data.index, dtype="float64")
+        previous_side = 0
+        grouped = list(data.groupby(pd.Grouper(freq=rule), sort=True))
+        for bucket_start, bucket in grouped:
+            if bucket.empty or bucket_start not in htf_signals.index:
+                continue
+            new_side = int(htf_signals.loc[bucket_start])
+            bucket_signal = pd.Series(previous_side, index=bucket.index, dtype="int8")
+            if new_side != previous_side:
+                bucket_signal.iloc[-1] = new_side
+                maybe_fill = htf_fills.loc[bucket_start]
+                if pd.notna(maybe_fill):
+                    fills.loc[bucket.index[-1]] = float(maybe_fill)
+            signals.loc[bucket.index] = bucket_signal
+            previous_side = new_side
+
+        return signals.astype("int8"), fills.astype("float64")
 
     def _compute_position_notional(self, capital: float, close_returns: pd.Series, bar_index: int) -> float:
         mode = self.config.position_size_mode.strip().lower()

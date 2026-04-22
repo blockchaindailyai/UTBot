@@ -27,6 +27,13 @@ Intrabar-style higher-timeframe signals (for example, build progressive 1D bars 
 python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --out .\artifacts_intrabar
 ```
 
+By default, `--signal-timeframe` uses **progressive intrabar simulation** (signals can change intrabar).  
+If you want strict higher-timeframe close-only signals, use:
+
+```powershell
+python .\examples\run_backtest.py --csv .\examples\sample_ohlcv.csv --strategy ut_bot --signal-timeframe 1D --signal-timeframe-closed-only --out .\artifacts_intrabar_closed
+```
+
 For dense source bars (like 5m), cap intrabar evaluations per 1D bar to speed up runs:
 
 ```powershell

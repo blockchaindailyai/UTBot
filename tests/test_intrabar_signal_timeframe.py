@@ -53,6 +53,7 @@ def test_signal_timeframe_detects_intraday_flip_for_daily_bar() -> None:
         BacktestConfig(
             initial_capital=10_000.0,
             signal_timeframe="1D",
+            signal_timeframe_progressive=True,
             execute_on_signal_bar=True,
         )
     )
@@ -76,7 +77,9 @@ def test_signal_timeframe_works_without_volume_column() -> None:
         index=idx,
     )
 
-    engine = BacktestEngine(BacktestConfig(signal_timeframe="1D", execute_on_signal_bar=True))
+    engine = BacktestEngine(
+        BacktestConfig(signal_timeframe="1D", signal_timeframe_progressive=True, execute_on_signal_bar=True)
+    )
     result = engine.run(data, DailyMomentumStrategy())
 
     assert len(result.equity_curve) == len(data)
@@ -100,6 +103,7 @@ def test_signal_timeframe_caps_intrabar_evaluations_per_bucket() -> None:
     engine = BacktestEngine(
         BacktestConfig(
             signal_timeframe="1D",
+            signal_timeframe_progressive=True,
             execute_on_signal_bar=True,
             max_intrabar_evaluations_per_signal_bar=4,
         )
@@ -127,6 +131,7 @@ def test_signal_timeframe_history_bars_limits_strategy_input_length() -> None:
     engine = BacktestEngine(
         BacktestConfig(
             signal_timeframe="1D",
+            signal_timeframe_progressive=True,
             execute_on_signal_bar=True,
             max_intrabar_evaluations_per_signal_bar=8,
             signal_timeframe_history_bars=3,
@@ -155,6 +160,7 @@ def test_signal_timeframe_limits_to_one_side_change_per_bucket() -> None:
     engine = BacktestEngine(
         BacktestConfig(
             signal_timeframe="1D",
+            signal_timeframe_progressive=True,
             execute_on_signal_bar=True,
             max_intrabar_evaluations_per_signal_bar=24,
         )
@@ -164,3 +170,33 @@ def test_signal_timeframe_limits_to_one_side_change_per_bucket() -> None:
     for day, day_signals in signals.groupby(signals.index.floor("1D")):
         transitions = int(((day_signals != day_signals.shift(1)) & day_signals.shift(1).notna()).sum())
         assert transitions <= 1, f"Detected more than one side change within day {day}"
+
+
+def test_signal_timeframe_default_mode_aligns_to_closed_daily_signals() -> None:
+    idx = pd.date_range("2024-01-01", periods=72, freq="1h", tz="UTC")
+    close = pd.Series(range(len(idx)), index=idx, dtype="float64") + 100.0
+    data = pd.DataFrame(
+        {
+            "open": close - 0.2,
+            "high": close + 0.6,
+            "low": close - 0.6,
+            "close": close,
+            "volume": 1_000.0,
+        },
+        index=idx,
+    )
+    strategy = DailyMomentumStrategy()
+    engine = BacktestEngine(
+        BacktestConfig(
+            signal_timeframe="1D",
+            signal_timeframe_progressive=False,
+            execute_on_signal_bar=True,
+        )
+    )
+    signals, _ = engine._generate_signals(data, strategy)  # noqa: SLF001
+
+    # In closed-bar mode, side changes only happen on the last source bar of each day.
+    for _, day_signals in signals.groupby(signals.index.floor("1D")):
+        day_changes = (day_signals != day_signals.shift(1)) & day_signals.shift(1).notna()
+        if day_changes.any():
+            assert day_changes[day_changes].index[0] == day_signals.index[-1]

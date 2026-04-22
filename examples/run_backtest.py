@@ -62,6 +62,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--signal-timeframe-progressive",
+        action="store_true",
+        help=(
+            "Enable progressive intrabar simulation for signal-timeframe bars "
+            "(default behavior)."
+        ),
+    )
+    parser.add_argument(
+        "--signal-timeframe-closed-only",
+        action="store_true",
+        help=(
+            "Disable progressive intrabar simulation and only update signal-timeframe "
+            "signals on higher-timeframe bar close."
+        ),
+    )
+    parser.add_argument(
         "--max-intrabar-evaluations-per-signal-bar",
         type=int,
         default=24,
@@ -115,6 +131,7 @@ def main() -> None:
             volatility_max_scale=args.volatility_max_scale,
             execute_on_signal_bar=strategy_name in {"ut_bot", "utbot"},
             signal_timeframe=args.signal_timeframe,
+            signal_timeframe_progressive=not args.signal_timeframe_closed_only,
             max_intrabar_evaluations_per_signal_bar=args.max_intrabar_evaluations_per_signal_bar,
             signal_timeframe_history_bars=args.signal_timeframe_history_bars,
         )
