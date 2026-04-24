@@ -45,6 +45,12 @@ def test_pdf_report_adds_cli_flags_page(tmp_path) -> None:
     assert "--ut-ma-filter" in pdf_text
     assert "2024-01-02" in pdf_text
     assert "2024-01-03" in pdf_text
+    assert "Mean trade PnL \\(USD/%\\)" in pdf_text
+    assert "Median trade PnL \\(USD/%\\)" in pdf_text
+    assert "Total slippage paid \\(est\\)" in pdf_text
+    assert "Max effective leverage used" in pdf_text
+    assert "Avg Holding Bars" in pdf_text
+    assert "Exposure" in pdf_text
 
 
 def test_collect_set_cli_flags_returns_only_non_default_values() -> None:

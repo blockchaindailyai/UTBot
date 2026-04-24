@@ -228,8 +228,19 @@ def _metric_rows(result: BacktestResult) -> list[tuple[str, str]]:
     stats = result.stats
     trades_df = result.trades_dataframe()
     avg_trade = float(trades_df["pnl"].mean()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
+    median_trade = float(trades_df["pnl"].median()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
     best_trade = float(trades_df["pnl"].max()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
     worst_trade = float(trades_df["pnl"].min()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
+    avg_trade_pct = float(trades_df["return_pct"].mean()) if (not trades_df.empty and "return_pct" in trades_df) else 0.0
+    median_trade_pct = (
+        float(trades_df["return_pct"].median()) if (not trades_df.empty and "return_pct" in trades_df) else 0.0
+    )
+    traded_notional = 0.0
+    if not trades_df.empty and {"entry_price", "exit_price", "units"}.issubset(set(trades_df.columns)):
+        traded_notional = float(
+            (trades_df["entry_price"].abs() * trades_df["units"].abs()).sum()
+            + (trades_df["exit_price"].abs() * trades_df["units"].abs()).sum()
+        )
 
     return [
         ("Final Equity", f"{stats.get('final_equity', 0.0):,.2f}"),
@@ -241,7 +252,17 @@ def _metric_rows(result: BacktestResult) -> list[tuple[str, str]]:
         ("Total Trades", f"{int(stats.get('total_trades', 0.0))}"),
         ("Win Rate", f"{stats.get('win_rate', 0.0) * 100:.2f}%"),
         ("Profit Factor", f"{stats.get('profit_factor', 0.0):.3f}"),
-        ("Avg Trade PnL", f"{avg_trade:,.2f}"),
+        ("Mean trade PnL (USD/%)", f"{avg_trade:,.2f} / {avg_trade_pct * 100:.2f}%"),
+        ("Median trade PnL (USD/%)", f"{median_trade:,.2f} / {median_trade_pct * 100:.2f}%"),
+        ("Total slippage paid (est)", f"{stats.get('total_slippage_paid', 0.0):,.2f}"),
+        ("Total fees paid", f"{stats.get('total_fees_paid', 0.0):,.2f}"),
+        ("Total interest/funding paid", f"{stats.get('total_financing_paid', 0.0):,.2f}"),
+        ("Total profit before fees", f"{stats.get('total_profit_before_fees', 0.0):,.2f}"),
+        ("Total volume traded", f"{stats.get('total_volume_traded', traded_notional):,.2f}"),
+        ("Max effective leverage used", f"{stats.get('max_effective_leverage_used', 0.0):.2f}x"),
+        ("Expectancy", f"{stats.get('expectancy', 0.0):.4f}"),
+        ("Avg Holding Bars", f"{stats.get('avg_holding_bars', 0.0):.4f}"),
+        ("Exposure", f"{stats.get('exposure', 0.0) * 100:.2f}%"),
         ("Best Trade", f"{best_trade:,.2f}"),
         ("Worst Trade", f"{worst_trade:,.2f}"),
     ]
