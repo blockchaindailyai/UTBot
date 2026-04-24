@@ -111,8 +111,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _collect_set_cli_flags(parser: argparse.ArgumentParser, args: argparse.Namespace) -> dict[str, object]:
+    defaults = {
+        action.dest: action.default
+        for action in parser._actions
+        if action.dest != "help"
+    }
+
+    set_flags: dict[str, object] = {}
+    for name, value in vars(args).items():
+        default = defaults.get(name)
+        if name == "csv":
+            set_flags[name] = value
+            continue
+        if value == default or value is None or value is False:
+            continue
+        set_flags[name] = value
+    return set_flags
+
+
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -169,7 +189,12 @@ def main() -> None:
             chart_data = resample_ohlcv(data, args.signal_timeframe)
 
     generate_local_tradingview_chart(data=chart_data, result=result, output_path=out_dir / "chart.html")
-    generate_backtest_pdf_report(result=result, output_path=out_dir / "report.pdf")
+    cli_flags = _collect_set_cli_flags(parser, args)
+    generate_backtest_pdf_report(
+        result=result,
+        output_path=out_dir / "report.pdf",
+        cli_flags=cli_flags,
+    )
     ut_bot_strategy_path = out_dir / "ut_bot_strategy.pine"
     generate_ut_bot_strategy_pinescript(output_path=str(ut_bot_strategy_path))
     print(f"TradingView UT Bot strategy script written to: {ut_bot_strategy_path}")
