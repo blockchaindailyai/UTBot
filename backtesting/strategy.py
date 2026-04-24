@@ -107,13 +107,23 @@ class MovingAverageCrossStrategy(Strategy):
 class UTBotStrategy(Strategy):
     """UT Bot ATR trailing-stop strategy."""
 
-    def __init__(self, key_value: float = 1.0, atr_period: int = 10) -> None:
+    def __init__(
+        self,
+        key_value: float = 1.0,
+        atr_period: int = 10,
+        ma_filter_enabled: bool = False,
+        ma_period: int = 60,
+    ) -> None:
         if key_value <= 0:
             raise ValueError("key_value must be positive")
         if atr_period <= 0:
             raise ValueError("atr_period must be positive")
+        if ma_period <= 0:
+            raise ValueError("ma_period must be positive")
         self.key_value = float(key_value)
         self.atr_period = int(atr_period)
+        self.ma_filter_enabled = bool(ma_filter_enabled)
+        self.ma_period = int(ma_period)
         self.signal_fill_prices: pd.Series | None = None
 
     def generate_signals(self, data: pd.DataFrame) -> pd.Series:
@@ -123,6 +133,21 @@ class UTBotStrategy(Strategy):
             atr_period=self.atr_period,
         )
         close = data["close"].astype("float64")
+        if self.ma_filter_enabled:
+            moving_average = close.rolling(self.ma_period).mean()
+            buy_signal = buy_signal & (close > moving_average)
+            sell_signal = sell_signal & (close < moving_average)
+
+            filtered_position_state = pd.Series(0, index=data.index, dtype="int8")
+            pos = 0
+            for i in range(len(data.index)):
+                if bool(buy_signal.iloc[i]):
+                    pos = 1
+                elif bool(sell_signal.iloc[i]):
+                    pos = -1
+                filtered_position_state.iloc[i] = pos
+            position_state = filtered_position_state
+
         fills = pd.Series(float("nan"), index=data.index, dtype="float64")
         signal_rows = buy_signal | sell_signal
         fills.loc[signal_rows] = close.loc[signal_rows].astype("float64")

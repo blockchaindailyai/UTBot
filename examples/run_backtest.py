@@ -39,6 +39,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ut-key-value", type=float, default=1.0)
     parser.add_argument("--ut-atr-period", type=int, default=10)
     parser.add_argument(
+        "--ut-ma-filter",
+        action="store_true",
+        help="Enable MA trade filtering (buy signals only above MA, sell signals only below MA).",
+    )
+    parser.add_argument(
+        "--ut-ma-period",
+        type=int,
+        default=60,
+        help="Moving-average period used by --ut-ma-filter.",
+    )
+    parser.add_argument(
         "--size-mode",
         type=str,
         default="equity_percent",
@@ -114,7 +125,12 @@ def main() -> None:
     elif strategy_name == "ma_cross":
         strategy = MovingAverageCrossStrategy(args.fast, args.slow)
     elif strategy_name in {"ut_bot", "utbot"}:
-        strategy = UTBotStrategy(key_value=args.ut_key_value, atr_period=args.ut_atr_period)
+        strategy = UTBotStrategy(
+            key_value=args.ut_key_value,
+            atr_period=args.ut_atr_period,
+            ma_filter_enabled=args.ut_ma_filter,
+            ma_period=args.ut_ma_period,
+        )
     else:
         raise ValueError("Unsupported strategy. Use one of: buy_hold, ma_cross, ut_bot")
     print(f"Selected strategy: {strategy_name}")
