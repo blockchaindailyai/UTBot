@@ -101,6 +101,11 @@ class BacktestEngine:
         entry_time: pd.Timestamp | None = None
         entry_index = 0
         trades: list[Trade] = []
+        total_fees_paid = 0.0
+        total_slippage_paid = 0.0
+        total_profit_before_fees = 0.0
+        total_volume_traded = 0.0
+        max_effective_leverage_used = 0.0
 
         for i in range(1, len(data)):
             signal_now = int(signals.iloc[i])
@@ -118,10 +123,15 @@ class BacktestEngine:
 
             if units != 0 and desired_signal != current_signal:
                 fill = price * (1.0 - self.config.slippage_rate * current_signal)
+                slippage_paid = abs(price - fill) * abs(units)
+                total_slippage_paid += float(slippage_paid)
                 gross = (fill - entry_price) * units
                 fee = abs(fill * units) * self.config.fee_rate
+                total_fees_paid += float(fee)
+                total_profit_before_fees += float(gross)
                 pnl = gross - fee
                 capital += pnl
+                total_volume_traded += abs(fill * units)
                 trade = Trade(
                     side="long" if units > 0 else "short",
                     entry_time=entry_time if entry_time is not None else ts,
@@ -146,12 +156,19 @@ class BacktestEngine:
                 )
                 fee = notional * self.config.fee_rate
                 units = (notional / fill) * desired_signal
+                slippage_paid = abs(fill - price) * abs(units)
+                total_slippage_paid += float(slippage_paid)
+                total_fees_paid += float(fee)
+                total_volume_traded += abs(fill * units)
                 entry_price = fill
                 entry_time = ts
                 entry_index = i
                 capital -= fee
 
             mark_to_market = capital if units == 0 else capital + (price - entry_price) * units
+            if units != 0 and mark_to_market != 0:
+                current_leverage = abs(price * units) / abs(mark_to_market)
+                max_effective_leverage_used = max(max_effective_leverage_used, float(current_leverage))
             equity_values.append(float(mark_to_market))
             positions.append(0 if units == 0 else (1 if units > 0 else -1))
 
@@ -160,10 +177,15 @@ class BacktestEngine:
             final_ts = data.index[-1]
             side = 1 if units > 0 else -1
             fill = final_price * (1.0 - self.config.slippage_rate * side)
+            slippage_paid = abs(final_price - fill) * abs(units)
+            total_slippage_paid += float(slippage_paid)
             gross = (fill - entry_price) * units
             fee = abs(fill * units) * self.config.fee_rate
+            total_fees_paid += float(fee)
+            total_profit_before_fees += float(gross)
             pnl = gross - fee
             capital += pnl
+            total_volume_traded += abs(fill * units)
             trade = Trade(
                 side="long" if units > 0 else "short",
                 entry_time=entry_time if entry_time is not None else final_ts,
@@ -193,6 +215,12 @@ class BacktestEngine:
         )
         stats["final_equity"] = float(equity.iloc[-1])
         stats["total_trades"] = float(len(trades))
+        stats["total_slippage_paid"] = float(total_slippage_paid)
+        stats["total_fees_paid"] = float(total_fees_paid)
+        stats["total_financing_paid"] = 0.0
+        stats["total_profit_before_fees"] = float(total_profit_before_fees)
+        stats["total_volume_traded"] = float(total_volume_traded)
+        stats["max_effective_leverage_used"] = float(max_effective_leverage_used)
 
         return BacktestResult(
             equity_curve=equity,

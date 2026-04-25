@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -101,6 +102,10 @@ def _draw_rect(page: _Page, x: float, y: float, width: float, height: float) -> 
     page.commands.append(f"{x:.1f} {y:.1f} {width:.1f} {height:.1f} re S")
 
 
+def _draw_line(page: _Page, x1: float, y1: float, x2: float, y2: float) -> None:
+    page.commands.append(f"{x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
+
+
 def _draw_polyline(page: _Page, points: list[tuple[float, float]], rgb: tuple[float, float, float]) -> None:
     if len(points) < 2:
         return
@@ -148,27 +153,97 @@ def _draw_chart_axes(
     chart_y: float,
     chart_w: float,
     chart_h: float,
-    x_min_label: str,
-    x_max_label: str,
+    x_ticks: list[tuple[float, str]],
     y_min: float,
     y_max: float,
+    y_tick_count: int = 6,
     y_is_percent: bool = False,
 ) -> None:
     y_formatter = (lambda value: f"{value * 100:.2f}%") if y_is_percent else (lambda value: f"{value:,.2f}")
-    _add_text(page, chart_x - 2.0, chart_y - 14.0, x_min_label, 8)
-    _add_text(page, chart_x + chart_w - 52.0, chart_y - 14.0, x_max_label, 8)
-    _add_text(page, chart_x - 56.0, chart_y + chart_h - 2.0, y_formatter(y_max), 8)
-    _add_text(page, chart_x - 56.0, chart_y - 2.0, y_formatter(y_min), 8)
+    for x_ratio, x_label in x_ticks:
+        tick_x = chart_x + (x_ratio * chart_w)
+        _draw_line(page, tick_x, chart_y, tick_x, chart_y - 4.0)
+        _add_text(page, tick_x - 26.0, chart_y - 14.0, x_label, 7)
+
+    if y_tick_count < 2:
+        y_tick_count = 2
+    for i in range(y_tick_count):
+        y_ratio = i / (y_tick_count - 1)
+        tick_y = chart_y + (y_ratio * chart_h)
+        tick_value = y_min + (y_ratio * (y_max - y_min))
+        _draw_line(page, chart_x - 4.0, tick_y, chart_x, tick_y)
+        _add_text(page, chart_x - 58.0, tick_y - 2.0, y_formatter(tick_value), 8)
+
+
+def _coerce_datetime(value: object) -> datetime | None:
+    converted = value
+    if hasattr(converted, "to_pydatetime"):
+        converted = converted.to_pydatetime()
+    if isinstance(converted, np.datetime64):
+        converted = converted.astype("datetime64[ms]").tolist()
+    return converted if isinstance(converted, datetime) else None
+
+
+def _format_x_label(value: object, include_time: bool) -> str:
+    converted = value
+    if hasattr(converted, "to_pydatetime"):
+        converted = converted.to_pydatetime()
+    if isinstance(converted, np.datetime64):
+        converted = converted.astype("datetime64[ms]").tolist()
+
+    if isinstance(converted, datetime):
+        return converted.strftime("%Y-%m-%d %H:%M") if include_time else converted.strftime("%Y-%m-%d")
+    if isinstance(converted, date):
+        return converted.strftime("%Y-%m-%d")
+
+    label = str(value)
+    return label[:16] if include_time else label[:10]
+
+
+def _build_x_ticks(series: object, tick_count: int = 6) -> list[tuple[float, str]]:
+    index = getattr(series, "index", None)
+    if index is None or len(index) == 0:
+        return [(0.0, "0"), (1.0, "0")]
+
+    length = len(index)
+    if length == 1:
+        return [(0.0, _format_x_label(index[0], include_time=False))]
+
+    tick_count = max(2, min(tick_count, length))
+    first_dt = _coerce_datetime(index[0])
+    last_dt = _coerce_datetime(index[-1])
+    include_time = False
+    if first_dt is not None and last_dt is not None:
+        include_time = abs((last_dt - first_dt).total_seconds()) <= (3 * 24 * 60 * 60)
+
+    ticks: list[tuple[float, str]] = []
+    for raw_position in np.linspace(0, length - 1, tick_count):
+        idx = int(round(float(raw_position)))
+        x_ratio = idx / max(length - 1, 1)
+        ticks.append((x_ratio, _format_x_label(index[idx], include_time=include_time)))
+    return ticks
 
 
 def _metric_rows(result: BacktestResult) -> list[tuple[str, str]]:
     stats = result.stats
     trades_df = result.trades_dataframe()
     avg_trade = float(trades_df["pnl"].mean()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
+    median_trade = float(trades_df["pnl"].median()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
     best_trade = float(trades_df["pnl"].max()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
     worst_trade = float(trades_df["pnl"].min()) if (not trades_df.empty and "pnl" in trades_df) else 0.0
+    avg_trade_pct = float(trades_df["return_pct"].mean()) if (not trades_df.empty and "return_pct" in trades_df) else 0.0
+    median_trade_pct = (
+        float(trades_df["return_pct"].median()) if (not trades_df.empty and "return_pct" in trades_df) else 0.0
+    )
+    traded_notional = 0.0
+    if not trades_df.empty and {"entry_price", "exit_price", "units"}.issubset(set(trades_df.columns)):
+        traded_notional = float(
+            (trades_df["entry_price"].abs() * trades_df["units"].abs()).sum()
+            + (trades_df["exit_price"].abs() * trades_df["units"].abs()).sum()
+        )
 
     return [
+        ("Total Bars Analyzed", f"{len(result.equity_curve):,}"),
         ("Final Equity", f"{stats.get('final_equity', 0.0):,.2f}"),
         ("Total Return", f"{stats.get('total_return', 0.0) * 100:.2f}%"),
         ("CAGR", f"{stats.get('cagr', 0.0) * 100:.2f}%"),
@@ -178,7 +253,17 @@ def _metric_rows(result: BacktestResult) -> list[tuple[str, str]]:
         ("Total Trades", f"{int(stats.get('total_trades', 0.0))}"),
         ("Win Rate", f"{stats.get('win_rate', 0.0) * 100:.2f}%"),
         ("Profit Factor", f"{stats.get('profit_factor', 0.0):.3f}"),
-        ("Avg Trade PnL", f"{avg_trade:,.2f}"),
+        ("Mean trade PnL (USD/%)", f"{avg_trade:,.2f} / {avg_trade_pct * 100:.2f}%"),
+        ("Median trade PnL (USD/%)", f"{median_trade:,.2f} / {median_trade_pct * 100:.2f}%"),
+        ("Total slippage paid (est)", f"{stats.get('total_slippage_paid', 0.0):,.2f}"),
+        ("Total fees paid", f"{stats.get('total_fees_paid', 0.0):,.2f}"),
+        ("Total interest/funding paid", f"{stats.get('total_financing_paid', 0.0):,.2f}"),
+        ("Total profit before fees", f"{stats.get('total_profit_before_fees', 0.0):,.2f}"),
+        ("Total volume traded", f"{stats.get('total_volume_traded', traded_notional):,.2f}"),
+        ("Max effective leverage used", f"{stats.get('max_effective_leverage_used', 0.0):.2f}x"),
+        ("Expectancy", f"{stats.get('expectancy', 0.0):.4f}"),
+        ("Avg Holding Bars", f"{stats.get('avg_holding_bars', 0.0):.4f}"),
+        ("Exposure", f"{stats.get('exposure', 0.0) * 100:.2f}%"),
         ("Best Trade", f"{best_trade:,.2f}"),
         ("Worst Trade", f"{worst_trade:,.2f}"),
     ]
@@ -202,10 +287,10 @@ def _equity_drawdown_chart(page: _Page, result: BacktestResult) -> None:
         chart_y=chart_y,
         chart_w=chart_w,
         chart_h=chart_h,
-        x_min_label="0",
-        x_max_label=str(max(len(result.equity_curve) - 1, 0)),
+        x_ticks=_build_x_ticks(result.equity_curve, tick_count=6),
         y_min=equity_min,
         y_max=equity_max,
+        y_tick_count=7,
     )
 
     running_max = result.equity_curve.cummax()
@@ -226,10 +311,10 @@ def _equity_drawdown_chart(page: _Page, result: BacktestResult) -> None:
         chart_y=dd_y,
         chart_w=dd_w,
         chart_h=dd_h,
-        x_min_label="0",
-        x_max_label=str(max(len(drawdown) - 1, 0)),
+        x_ticks=_build_x_ticks(drawdown, tick_count=6),
         y_min=dd_min,
         y_max=dd_max,
+        y_tick_count=7,
         y_is_percent=True,
     )
 
@@ -249,7 +334,53 @@ def _stats_panel(page: _Page, result: BacktestResult) -> None:
         _add_text(page, 40, y - 8, "No closed trades were generated for this run.", 10)
 
 
-def generate_backtest_pdf_report(result: BacktestResult, output_path: str | Path) -> Path:
+def _wrap_text(text: str, width: int) -> list[str]:
+    if len(text) <= width:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > width:
+        split_at = remaining.rfind(" ", 0, width + 1)
+        if split_at <= 0:
+            split_at = width
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _cli_flags_panel(page: _Page, cli_flags: dict[str, object] | None) -> None:
+    _add_text(page, 40, 560, "Backtest Report", 16)
+    _add_text(page, 40, 540, "CLI Flags Set", 12)
+
+    if not cli_flags:
+        _add_text(page, 40, 515, "No CLI flags were provided for this run.", 10)
+        return
+
+    y = 515.0
+    for name in sorted(cli_flags):
+        value = cli_flags[name]
+        flag_name = f"--{name.replace('_', '-')}"
+        if isinstance(value, bool):
+            line = flag_name if value else f"{flag_name}=false"
+        elif isinstance(value, (list, tuple)):
+            joined = ", ".join(str(item) for item in value)
+            line = f"{flag_name}={joined}"
+        else:
+            line = f"{flag_name}={value}"
+        for wrapped in _wrap_text(line, width=95):
+            _add_text(page, 40, y, wrapped, 10)
+            y -= 14
+            if y < 40:
+                return
+
+
+def generate_backtest_pdf_report(
+    result: BacktestResult,
+    output_path: str | Path,
+    cli_flags: dict[str, object] | None = None,
+) -> Path:
     """Generate a full PDF report with summary statistics and charts."""
     path = Path(output_path)
 
@@ -257,6 +388,8 @@ def generate_backtest_pdf_report(result: BacktestResult, output_path: str | Path
     page = doc.new_page()
     _stats_panel(page, result)
     _equity_drawdown_chart(page, result)
+    flags_page = doc.new_page()
+    _cli_flags_panel(flags_page, cli_flags)
 
     doc.save(path)
     return path
