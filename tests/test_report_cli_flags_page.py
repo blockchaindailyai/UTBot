@@ -12,7 +12,15 @@ if str(REPO_ROOT) not in sys.path:
 
 from backtesting.engine import BacktestConfig, BacktestEngine
 from backtesting.report import _Page, _build_x_ticks, _draw_chart_axes, generate_backtest_pdf_report
-from backtesting.strategy import MovingAverageCrossStrategy
+from backtesting.strategy import MovingAverageCrossStrategy, Strategy
+
+
+class _SignalStrategy(Strategy):
+    def __init__(self, signals: pd.Series) -> None:
+        self._signals = signals
+
+    def generate_signals(self, data: pd.DataFrame) -> pd.Series:
+        return self._signals.reindex(data.index).fillna(0).astype("int8")
 
 
 def test_pdf_report_adds_cli_flags_page(tmp_path) -> None:
@@ -40,6 +48,7 @@ def test_pdf_report_adds_cli_flags_page(tmp_path) -> None:
 
     pdf_text = out.read_bytes().decode("latin-1", errors="ignore")
     assert "CLI Flags Set" in pdf_text
+    assert "Total Bars Analyzed" in pdf_text
     assert "--csv=examples/sample_ohlcv.csv" in pdf_text
     assert "--strategy=ma_cross" in pdf_text
     assert "--ut-ma-filter" in pdf_text
@@ -108,3 +117,21 @@ def test_draw_chart_axes_adds_granular_y_ticks() -> None:
 
     text_commands = [command for command in page.commands if " Tj ET" in command]
     assert len(text_commands) == 9
+
+
+def test_engine_tracks_nonzero_slippage_when_configured() -> None:
+    idx = pd.date_range("2024-01-01", periods=6, freq="h", tz="UTC")
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0],
+            "high": [101.0, 102.0, 103.0, 104.0, 105.0, 106.0],
+            "low": [99.0, 100.0, 101.0, 102.0, 103.0, 104.0],
+            "close": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0],
+            "volume": [1_000.0] * 6,
+        },
+        index=idx,
+    )
+    signals = pd.Series([0, 1, 1, 0, 0, 0], index=idx, dtype="int8")
+    result = BacktestEngine(BacktestConfig(slippage_rate=0.01, fee_rate=0.0)).run(data, _SignalStrategy(signals))
+
+    assert result.stats["total_slippage_paid"] > 0.0

@@ -243,6 +243,7 @@ def _metric_rows(result: BacktestResult) -> list[tuple[str, str]]:
         )
 
     return [
+        ("Total Bars Analyzed", f"{len(result.equity_curve):,}"),
         ("Final Equity", f"{stats.get('final_equity', 0.0):,.2f}"),
         ("Total Return", f"{stats.get('total_return', 0.0) * 100:.2f}%"),
         ("CAGR", f"{stats.get('cagr', 0.0) * 100:.2f}%"),
